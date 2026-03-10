@@ -38,7 +38,7 @@
         <service
             android:name=".CaptureService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|mediaProjection" />
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- FileProvider to share screenshot cache files with AnkiDroid -->
         <provider
