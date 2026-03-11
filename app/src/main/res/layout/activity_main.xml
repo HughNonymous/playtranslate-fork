@@ -538,7 +538,59 @@
 
         </LinearLayout>
 
-        <!-- Page 2: Accessibility / screen recording choice -->
+        <!-- Page 2a: Accessibility — single-screen devices (no screen recording option) -->
+        <LinearLayout
+            android:id="@+id/pageA11ySingle"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="28dp"
+            android:visibility="gone">
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/onboarding_a11y_single_title"
+                        android:textColor="?attr/colorTextPrimary"
+                        android:textSize="26sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="24dp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/onboarding_a11y_single_body"
+                        android:textColor="?attr/colorTextSecondary"
+                        android:textSize="14sp"
+                        android:lineSpacingMultiplier="1.4" />
+
+                </LinearLayout>
+            </ScrollView>
+
+            <Button
+                android:id="@+id/btnOpenA11ySingle"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="20dp"
+                android:text="@string/btn_open_a11y_settings"
+                android:textSize="16sp"
+                android:backgroundTint="?attr/colorAccentPrimary"
+                android:textColor="?attr/colorTextOnAccent"
+                app:cornerRadius="8dp" />
+
+        </LinearLayout>
+
+        <!-- Page 2b: Accessibility / screen recording choice (multi-screen) -->
         <LinearLayout
             android:id="@+id/pageA11y"
             android:layout_width="match_parent"
@@ -612,5 +664,6 @@
         </LinearLayout>
 
     </LinearLayout>
+
 
 </androidx.constraintlayout.widget.ConstraintLayout>

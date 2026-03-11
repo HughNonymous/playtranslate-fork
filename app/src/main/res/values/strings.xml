@@ -14,7 +14,7 @@
     <string name="label_target_lang">To</string>
 
     <!-- Accessibility service -->
-    <string name="accessibility_service_description">PlayTranslate uses the Accessibility Service solely to take screenshots of the game screen on the other display. No UI content, input events, or personal data are read or monitored.</string>
+    <string name="accessibility_service_description">PlayTranslate uses the Accessibility Service to take screenshots of the game screen and show a floating overlay icon. No UI content, input events, or personal data are read or monitored.</string>
     <string name="accessibility_dialog_title">Accessibility permission needed</string>
     <string name="accessibility_dialog_message">PlayTranslate needs the Accessibility permission to capture screenshots of the game screen on the top display while staying open on the bottom display.\n\nPlayTranslate does not read any UI content, monitor input, or access any personal data — it only takes screenshots when you tap Translate or start live mode.\n\nGo to Settings → Accessibility → Installed apps → PlayTranslate → Enable.</string>
     <string name="accessibility_dialog_open">Open Accessibility Settings</string>
@@ -41,7 +41,7 @@
     <string name="onboarding_notif_title">Allow Notifications</string>
     <string name="onboarding_notif_body">Android requires apps that run in the background to display a status bar notification while active.\n\nThis will never send alerts, sounds, or banners — only a quiet persistent indicator that PlayTranslate is running.</string>
     <string name="onboarding_a11y_title">Enable Accessibility</string>
-    <string name="onboarding_a11y_body">PlayTranslate uses Accessibility to:\n• Capture the game screen\n• Show a region preview on the game screen\n• Add custom capture regions\n\nIt does not read UI content, monitor input, or access personal data.</string>
+    <string name="onboarding_a11y_body">PlayTranslate uses Accessibility to:\n• Capture the game screen\n• Show a floating overlay icon on the game screen\n• Show a region preview on the game screen\n• Add custom capture regions\n\nIt does not read UI content, monitor input, or access personal data.</string>
     <string name="onboarding_a11y_alt">Screen recording works, but region preview and custom regions won\'t be available.</string>
     <string name="btn_grant_permission">Grant Permission</string>
     <string name="btn_open_a11y_settings">Open Accessibility Settings</string>
@@ -100,7 +100,16 @@
     <string name="label_rename_region">Rename region</string>
     <string name="hint_region_name">e.g. Dialogue box</string>
 
-    <!-- Hide translation -->\
+    <!-- Overlay icon -->
+    <string name="settings_show_overlay_icon">Show overlay icon</string>
+    <string name="settings_overlay_icon_hint">Shows a floating icon on the game screen for quick access to PlayTranslate. Drag it to any screen edge.</string>
+    <string name="overlay_icon_a11y_required_title">Accessibility required</string>
+    <string name="overlay_icon_a11y_required_message">The floating overlay icon requires the Accessibility permission to draw on the game screen.\n\nGo to Settings → Accessibility → Installed apps → PlayTranslate → Enable.</string>
+
+    <!-- Single-screen mode -->
+    <string name="onboarding_a11y_single_title">Enable Accessibility</string>
+    <string name="onboarding_a11y_single_body">PlayTranslate needs the Accessibility permission to work on single-screen devices.\n\nWith it, PlayTranslate can:\n• Show a floating overlay icon on your screen\n• Show translated text as an overlay over your game\n• Capture the game screen without leaving the app\n• Display custom capture regions on your screen\n\nIt does not read UI content, monitor input, or access personal data.</string>
+<!-- Hide translation -->\
     <string name="btn_reveal_translation">Show Translation</string>
     <string name="settings_hide_translation">Hide translation</string>
     <string name="settings_hide_translation_hint">Skip automatic translation. Tap "Show Translation" on the results screen to see it on demand.</string>

@@ -35,6 +35,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.gamelens.BuildConfig
 import com.gamelens.dictionary.Deinflector
 import com.gamelens.dictionary.DictionaryManager
 import com.gamelens.model.TranslationResult
@@ -84,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var onboardingContainer: View
     private lateinit var pageNotif: View
     private lateinit var pageA11y: View
+    private lateinit var pageA11ySingle: View
     private lateinit var labelOriginal: TextView
     private lateinit var labelTranslation: TextView
     private lateinit var tvNoWords: TextView
@@ -116,6 +118,20 @@ class MainActivity : AppCompatActivity() {
     private var dropdownTopY = 0f
     private var dropdownGameDisplay: Display? = null
     private var dropdownRegions = listOf<RegionEntry>()
+
+    // ── Display listener (detects screen connect/disconnect) ─────────────
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) { runOnUiThread {
+            checkOnboardingState()
+            PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
+        } }
+        override fun onDisplayRemoved(displayId: Int) { runOnUiThread {
+            checkOnboardingState()
+            PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
+        } }
+        override fun onDisplayChanged(displayId: Int) {}
+    }
 
     // ── State ─────────────────────────────────────────────────────────────
 
@@ -195,8 +211,12 @@ class MainActivity : AppCompatActivity() {
         // Suppress the window transition that would otherwise flash when recreating for a theme change
         if (prefs.suppressNextTransition) {
             prefs.suppressNextTransition = false
-            @Suppress("DEPRECATION")
-            overridePendingTransition(0, 0)
+            if (Build.VERSION.SDK_INT >= 34) {
+                overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
         }
         setContentView(R.layout.activity_main)
 
@@ -206,6 +226,8 @@ class MainActivity : AppCompatActivity() {
         setupOnboarding()
         setupEditOverlay()
         startAndBindService()
+        (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+            .registerDisplayListener(displayListener, null)
         lifecycleScope.launch(Dispatchers.IO) {
             DictionaryManager.get(applicationContext).preload()
             Deinflector.preload()
@@ -214,14 +236,26 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Hide the floating icon while our app is in the foreground
+        PlayTranslateAccessibilityService.instance?.notifyAppResumed()
         checkOnboardingState()
         if (onboardingContainer.visibility == View.VISIBLE) return
+        if (isSingleScreen()) return
         initLiveHintText()
         updateActionButtonState()
         applyLiveModeVisibilitySetting()
     }
 
+    override fun onStop() {
+        super.onStop()
+        // App is no longer visible — show the floating icon again
+        PlayTranslateAccessibilityService.instance?.notifyAppStopped()
+    }
+
     override fun onDestroy() {
+        PlayTranslateAccessibilityService.instance?.hideFloatingIcon()
+        (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+            .unregisterDisplayListener(displayListener)
         if (isLiveMode) captureService?.stopLive()
         if (serviceConnected) unbindService(serviceConnection)
         editTranslationManager?.close()
@@ -260,6 +294,7 @@ class MainActivity : AppCompatActivity() {
         onboardingContainer  = findViewById(R.id.onboardingContainer)
         pageNotif            = findViewById(R.id.pageNotif)
         pageA11y             = findViewById(R.id.pageA11y)
+        pageA11ySingle       = findViewById(R.id.pageA11ySingle)
         editOverlay              = findViewById(R.id.editOverlay)
         etEditOriginal           = findViewById(R.id.etEditOriginal)
         translationSection       = findViewById(R.id.translationSection)
@@ -500,16 +535,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openSettings() {
-        SettingsBottomSheet.newInstance().also { sheet ->
+        showSettingsSheet(hideDismiss = false)
+    }
+
+    /** Creates and shows a SettingsBottomSheet with all callbacks wired. */
+    private fun showSettingsSheet(hideDismiss: Boolean) {
+        SettingsBottomSheet.newInstance(hideDismiss = hideDismiss).also { sheet ->
             sheet.onDisplayChanged = {
                 captureService?.resetConfiguration()
                 configureService()
+                PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
             }
             sheet.onHideLiveModeChanged = {
                 applyLiveModeVisibilitySetting()
             }
             sheet.onHideTranslationChanged = {
                 configureService()
+            }
+            sheet.onScreenModeChanged = {
+                checkOnboardingState()
             }
         }.show(supportFragmentManager, SettingsBottomSheet.TAG)
     }
@@ -652,26 +696,62 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun isSingleScreen(): Boolean = Prefs.isSingleScreen(this)
+
     private fun checkOnboardingState() {
         val notifGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        val captureReady = PlayTranslateAccessibilityService.isEnabled ||
-            prefs.captureMethod == "media_projection"
-        if (notifGranted && captureReady) {
+        val a11yEnabled = PlayTranslateAccessibilityService.isEnabled
+        val singleScreen = isSingleScreen()
+        val existingSheet = supportFragmentManager.findFragmentByTag(SettingsBottomSheet.TAG) as? SettingsBottomSheet
+
+        // Notification permission always comes first regardless of screen mode
+        if (!notifGranted) {
+            existingSheet?.dismissAllowingStateLoss()
+            showOnboardingPage(pageNotif)
+            return
+        }
+
+        if (singleScreen) {
+            // Single-screen: accessibility is required for overlay support
+            if (!a11yEnabled) {
+                existingSheet?.dismissAllowingStateLoss()
+                showOnboardingPage(pageA11ySingle)
+                return
+            }
+            // Single-screen + accessibility ready: settings IS the UI
+            onboardingContainer.visibility = View.GONE
+            btnSettings.visibility = View.GONE
+            val isAlreadySingleScreenSheet = existingSheet != null &&
+                existingSheet.arguments?.getBoolean("hide_dismiss", false) == true
+            if (!isAlreadySingleScreenSheet) {
+                existingSheet?.dismissAllowingStateLoss()
+                showSettingsSheet(hideDismiss = true)
+            }
+            return
+        }
+
+        // Multi-screen: dismiss any non-dismissable settings sheet from single-screen mode
+        if (existingSheet != null && existingSheet.arguments?.getBoolean("hide_dismiss", false) == true) {
+            existingSheet.dismissAllowingStateLoss()
+        }
+
+        val captureReady = a11yEnabled || prefs.captureMethod == "media_projection"
+        if (captureReady) {
             onboardingContainer.visibility = View.GONE
             btnSettings.visibility = View.VISIBLE
             return
         }
+        showOnboardingPage(pageA11y)
+    }
+
+    private fun showOnboardingPage(page: View) {
         onboardingContainer.visibility = View.VISIBLE
         btnSettings.visibility = View.GONE
-        if (!notifGranted) {
-            pageNotif.visibility = View.VISIBLE
-            pageA11y.visibility  = View.GONE
-        } else {
-            pageNotif.visibility = View.GONE
-            pageA11y.visibility  = View.VISIBLE
-        }
+        pageNotif.visibility      = if (page == pageNotif)      View.VISIBLE else View.GONE
+        pageA11y.visibility       = if (page == pageA11y)       View.VISIBLE else View.GONE
+        pageA11ySingle.visibility = if (page == pageA11ySingle) View.VISIBLE else View.GONE
     }
 
     private fun setupOnboarding() {
@@ -684,6 +764,9 @@ class MainActivity : AppCompatActivity() {
         pageA11y.findViewById<View>(R.id.btnUseScreenRecord).setOnClickListener {
             val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjectionLauncher.launch(mgr.createScreenCaptureIntent())
+        }
+        pageA11ySingle.findViewById<View>(R.id.btnOpenA11ySingle).setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
     }
 

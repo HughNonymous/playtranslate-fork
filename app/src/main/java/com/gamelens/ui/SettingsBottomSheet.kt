@@ -49,6 +49,8 @@ class SettingsBottomSheet : DialogFragment() {
     var onHideLiveModeChanged: (() -> Unit)? = null
     /** Called when the hide-translation switch changes. */
     var onHideTranslationChanged: (() -> Unit)? = null
+    /** Called when the debug force-single-screen toggle changes. */
+    var onScreenModeChanged: (() -> Unit)? = null
 
     private var deckEntries: List<Map.Entry<Long, String>> = emptyList()
     private var displayList: List<android.view.Display> = emptyList()
@@ -82,7 +84,20 @@ class SettingsBottomSheet : DialogFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        view.findViewById<View>(R.id.btnCloseSettings).setOnClickListener { dismiss() }
+        val hideDismiss = arguments?.getBoolean(ARG_HIDE_DISMISS, false) ?: false
+        val closeBtn = view.findViewById<View>(R.id.btnCloseSettings)
+        if (hideDismiss) {
+            closeBtn.visibility = View.GONE
+            // In single-screen mode, back should exit the app, not dismiss the sheet
+            dialog?.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == android.view.KeyEvent.KEYCODE_BACK && event.action == android.view.KeyEvent.ACTION_UP) {
+                    activity?.finish()
+                    true
+                } else false
+            }
+        } else {
+            closeBtn.setOnClickListener { dismiss() }
+        }
 
         val prefs           = Prefs(requireContext())
         llDisplayOptions    = view.findViewById(R.id.llDisplayOptions)
@@ -107,6 +122,26 @@ class SettingsBottomSheet : DialogFragment() {
                     }
                 }
             )
+        }
+
+        // ── Overlay icon toggle ──────────────────────────────────────────
+        val switchOverlayIcon = view.findViewById<Switch>(R.id.switchOverlayIcon)
+        switchOverlayIcon.isChecked = prefs.showOverlayIcon && PlayTranslateAccessibilityService.isEnabled
+        switchOverlayIcon.setOnCheckedChangeListener { _, checked ->
+            if (checked && !PlayTranslateAccessibilityService.isEnabled) {
+                switchOverlayIcon.isChecked = false
+                androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.overlay_icon_a11y_required_title)
+                    .setMessage(R.string.overlay_icon_a11y_required_message)
+                    .setPositiveButton(R.string.btn_open_a11y_settings) { _, _ ->
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+                return@setOnCheckedChangeListener
+            }
+            prefs.showOverlayIcon = checked
+            PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
         }
 
         // ── DeepL key (auto-save on text change) ─────────────────────────
@@ -206,6 +241,18 @@ class SettingsBottomSheet : DialogFragment() {
 
         // ── Theme picker ──────────────────────────────────────────────────
         buildThemePicker(llThemePicker, prefs)
+
+        // ── Debug section (debug builds only) ────────────────────────────
+        val llDebugSection = view.findViewById<LinearLayout>(R.id.llDebugSection)
+        if (com.gamelens.BuildConfig.DEBUG) {
+            llDebugSection.visibility = View.VISIBLE
+            val switchForceSingleScreen = view.findViewById<Switch>(R.id.switchForceSingleScreen)
+            switchForceSingleScreen.isChecked = prefs.debugForceSingleScreen
+            switchForceSingleScreen.setOnCheckedChangeListener { _, checked ->
+                prefs.debugForceSingleScreen = checked
+                onScreenModeChanged?.invoke()
+            }
+        }
     }
 
     override fun onResume() {
@@ -509,6 +556,10 @@ class SettingsBottomSheet : DialogFragment() {
 
     companion object {
         const val TAG = "SettingsBottomSheet"
-        fun newInstance() = SettingsBottomSheet()
+        private const val ARG_HIDE_DISMISS = "hide_dismiss"
+
+        fun newInstance(hideDismiss: Boolean = false) = SettingsBottomSheet().apply {
+            if (hideDismiss) arguments = android.os.Bundle().apply { putBoolean(ARG_HIDE_DISMISS, true) }
+        }
     }
 }

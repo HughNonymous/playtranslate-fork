@@ -2,6 +2,7 @@ package com.gamelens
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.hardware.display.DisplayManager
 import com.gamelens.BuildConfig
 import com.google.mlkit.nl.translate.TranslateLanguage
 import org.json.JSONArray
@@ -80,6 +81,26 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_SETTINGS_SCROLL_Y, 0)
         set(v) = sp.edit().putInt(KEY_SETTINGS_SCROLL_Y, v).apply()
 
+    /** Whether the floating overlay icon is shown on the game screen. */
+    var showOverlayIcon: Boolean
+        get() = sp.getBoolean(KEY_SHOW_OVERLAY_ICON, true)
+        set(v) = sp.edit().putBoolean(KEY_SHOW_OVERLAY_ICON, v).apply()
+
+    /** Edge the overlay icon is snapped to: 0=LEFT, 1=RIGHT, 2=TOP, 3=BOTTOM. */
+    var overlayIconEdge: Int
+        get() = sp.getInt(KEY_OVERLAY_ICON_EDGE, 1).let { if (it in 0..3) it else 1 }
+        set(v) = sp.edit().putInt(KEY_OVERLAY_ICON_EDGE, v).apply()
+
+    /** Fraction (0..1) along the snapped edge. 0.5 = middle. */
+    var overlayIconFraction: Float
+        get() = sp.getFloat(KEY_OVERLAY_ICON_FRACTION, 0.5f).coerceIn(0f, 1f)
+        set(v) = sp.edit().putFloat(KEY_OVERLAY_ICON_FRACTION, v).apply()
+
+    /** Debug-only: forces isSingleScreen() to return true regardless of actual display count. */
+    var debugForceSingleScreen: Boolean
+        get() = sp.getBoolean(KEY_DEBUG_FORCE_SINGLE_SCREEN, false)
+        set(v) = sp.edit().putBoolean(KEY_DEBUG_FORCE_SINGLE_SCREEN, v).apply()
+
     /** Set before recreate() so MainActivity suppresses the window transition animation. */
     var suppressNextTransition: Boolean
         get() = sp.getBoolean(KEY_SUPPRESS_TRANSITION, false)
@@ -139,7 +160,21 @@ class Prefs(context: Context) {
         private const val KEY_CAPTURE_INTERVAL_SEC  = "capture_interval_sec"
         private const val KEY_CAPTURE_METHOD           = "capture_method"
         private const val KEY_SETTINGS_SCROLL_Y        = "settings_scroll_y"
-        private const val KEY_SUPPRESS_TRANSITION       = "suppress_next_transition"
+        private const val KEY_SHOW_OVERLAY_ICON       = "show_overlay_icon"
+        private const val KEY_OVERLAY_ICON_EDGE      = "overlay_icon_edge"
+        private const val KEY_OVERLAY_ICON_FRACTION  = "overlay_icon_fraction"
+        private const val KEY_SUPPRESS_TRANSITION            = "suppress_next_transition"
+        private const val KEY_DEBUG_FORCE_SINGLE_SCREEN      = "debug_force_single_screen"
+
+        /** Single source of truth for single-screen detection. */
+        fun isSingleScreen(context: Context): Boolean {
+            if (BuildConfig.DEBUG) {
+                val sp = context.getSharedPreferences("playtranslate_prefs", Context.MODE_PRIVATE)
+                if (sp.getBoolean(KEY_DEBUG_FORCE_SINGLE_SCREEN, false)) return true
+            }
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            return dm.displays.size <= 1
+        }
 
         val DEFAULT_REGION_LIST: List<RegionEntry> = listOf(
             RegionEntry("Full screen",  0.00f, 1.00f),
