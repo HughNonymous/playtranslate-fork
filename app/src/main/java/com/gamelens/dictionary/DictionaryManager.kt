@@ -60,13 +60,28 @@ class DictionaryManager private constructor(private val context: Context) {
      *
      * Falls back to [Deinflector.tokenize] if the database is not ready.
      */
-    suspend fun tokenize(text: String): List<String> = withContext(Dispatchers.IO) {
+    suspend fun tokenize(text: String): List<String> =
+        tokenizeWithSurfaces(text).map { it.second }.distinct()
+
+    /**
+     * Tokenizes [text] and returns pairs of (surface span, lookup form).
+     *
+     * The surface span is the text as it appears in the input (e.g. "使わない")
+     * — useful for position mapping. The lookup form is the dictionary form
+     * (e.g. "使う") — used for dictionary lookup.
+     *
+     * For verbs/adjectives, the surface span includes following auxiliary
+     * tokens that are part of the conjugation (e.g. ない after 使わ).
+     *
+     * Falls back to [Deinflector.tokenize] if the database is not ready.
+     */
+    suspend fun tokenizeWithSurfaces(text: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         val database = ensureOpen()
-            ?: return@withContext Deinflector.tokenize(text)
+            ?: return@withContext Deinflector.tokenize(text).map { it to it }
 
         val tokens   = Deinflector.rawTokenInfos(text)
         val surfaces = tokens.map { it.surface }
-        val result   = mutableListOf<String>()
+        val result   = mutableListOf<Pair<String, String>>()
         var i = 0
 
         while (i < tokens.size) {
@@ -76,7 +91,7 @@ class DictionaryManager private constructor(private val context: Context) {
             for (n in maxN downTo 2) {
                 val phrase = surfaces.subList(i, i + n).joinToString("")
                 if (isLookupWorthy(phrase) && queryEntryIds(database, phrase).isNotEmpty()) {
-                    result.add(phrase)
+                    result.add(phrase to phrase)
                     i += n
                     advanced = true
                     break
@@ -84,17 +99,28 @@ class DictionaryManager private constructor(private val context: Context) {
             }
 
             if (!advanced) {
-                // Single token — keep only content words in base form.
                 val t = tokens[i]
                 if (isContentWord(t.pos)) {
-                    val word = t.baseForm ?: t.surface
-                    if (isLookupWorthy(word)) result.add(word)
+                    val lookupForm = t.baseForm ?: t.surface
+                    if (isLookupWorthy(lookupForm)) {
+                        // Gather the surface span: for verbs/adjectives, include
+                        // following auxiliary tokens (e.g. ない after 使わ)
+                        var surfaceSpan = t.surface
+                        if (t.pos == "動詞" || t.pos == "形容詞") {
+                            var j = i + 1
+                            while (j < tokens.size && tokens[j].pos in setOf("助動詞", "助詞")) {
+                                surfaceSpan += tokens[j].surface
+                                j++
+                            }
+                        }
+                        result.add(surfaceSpan to lookupForm)
+                    }
                 }
                 i++
             }
         }
 
-        result.distinct()
+        result
     }
 
     private fun isContentWord(pos: String?): Boolean = pos in setOf(

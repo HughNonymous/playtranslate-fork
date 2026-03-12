@@ -259,6 +259,15 @@ class SettingsBottomSheet : DialogFragment() {
         super.onResume()
         refreshAnkiSection()
         refreshCaptureMethodSection()
+        refreshOverlayIconSwitch()
+    }
+
+    private fun refreshOverlayIconSwitch() {
+        val v = view ?: return
+        val ctx = context ?: return
+        val prefs = Prefs(ctx)
+        val sw = v.findViewById<Switch>(R.id.switchOverlayIcon) ?: return
+        sw.isChecked = prefs.showOverlayIcon && PlayTranslateAccessibilityService.isEnabled
     }
 
     // ── Capture method section ────────────────────────────────────────────

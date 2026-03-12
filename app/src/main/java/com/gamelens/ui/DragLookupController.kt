@@ -1,0 +1,371 @@
+package com.gamelens.ui
+
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import com.gamelens.OcrManager
+import com.gamelens.PlayTranslateAccessibilityService
+import com.gamelens.dictionary.DictionaryManager
+import com.gamelens.model.JishoWord
+import kotlinx.coroutines.*
+import kotlin.math.abs
+
+/**
+ * Manages the drag-to-lookup workflow:
+ * 1. On drag start: screenshot the full screen, run OCR, cache line positions
+ * 2. On hold-still: hit-test finger against cached lines, tokenize, dictionary lookup
+ * 3. Show/dismiss the WordLookupPopup
+ *
+ * The screenshot is taken once (when the icon switches to ring mode), not repeatedly.
+ * Finger position is checked against cached OCR bounding boxes — essentially free.
+ */
+class DragLookupController(
+    private val displayId: Int,
+    private val screenW: Int,
+    private val screenH: Int,
+    private val popup: WordLookupPopup
+) {
+    private val handler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(
+        Dispatchers.Main + SupervisorJob() +
+            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Uncaught", e) }
+    )
+    private val ocrManager = OcrManager()
+
+    /** Cached OCR lines from the initial screenshot. */
+    private var ocrLines: List<OcrManager.OcrLine>? = null
+    private var ocrJob: Job? = null
+    private var lookupJob: Job? = null
+    private var lastWord: String? = null
+
+    // Hold-still detection with wobble tolerance
+    private var anchorX = 0f
+    private var anchorY = 0f
+    private var holdTimerScheduled = false
+    private var holdRetryCount = 0
+    private val MAX_HOLD_RETRIES = 30
+
+    val isPopupShowing: Boolean get() = popup.isShowing
+
+    companion object {
+        private const val TAG = "DragLookup"
+        private const val HOLD_STILL_MS = 350L
+        /** Wobble radius — finger movement within this distance doesn't reset the timer. */
+        private const val WOBBLE_RADIUS_DP = 8f
+        /** Horizontal expansion around finger for line hit-testing. */
+        private const val HIT_EXPAND_X_PX = 80
+        /** Vertical expansion — kept small to avoid grabbing adjacent lines. */
+        private const val HIT_EXPAND_Y_PX = 30
+    }
+
+    private val wobbleRadiusPx: Float by lazy {
+        WOBBLE_RADIUS_DP * popup.ctx.resources.displayMetrics.density
+    }
+
+    // ── Public API (called from FloatingOverlayIcon callbacks) ───────────
+
+    /**
+     * Called once when the icon transitions to drag mode (ring appearance).
+     * Takes a screenshot and runs full-screen OCR. The screenshot is captured
+     * right after the icon redraws as a transparent ring so the text underneath
+     * is not obscured.
+     */
+    fun onDragStart() {
+        ocrLines = null
+        ocrJob?.cancel()
+        ocrJob = scope.launch {
+            try {
+                captureAndOcr()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "OCR failed", e)
+            }
+        }
+    }
+
+    /**
+     * Called on every ACTION_MOVE during a drag.
+     * Uses wobble-tolerant hold-still detection: the timer only resets when
+     * the finger moves beyond [wobbleRadiusPx] from the anchor point.
+     */
+    fun onDragMove(rawX: Float, rawY: Float) {
+        val dx = rawX - anchorX
+        val dy = rawY - anchorY
+        val movedBeyondWobble = dx * dx + dy * dy > wobbleRadiusPx * wobbleRadiusPx
+
+        if (movedBeyondWobble) {
+            anchorX = rawX
+            anchorY = rawY
+            handler.removeCallbacks(holdStillRunnable)
+            holdTimerScheduled = false
+
+            // Immediately try a lookup at the new position (keeps popup up during transition)
+            if (popup.isShowing) {
+                lookupJob?.cancel()
+                lookupJob = scope.launch {
+                    try {
+                        val lines = ocrLines ?: return@launch
+                        performLookup(rawX.toInt(), rawY.toInt(), lines, dismissOnMiss = true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Move-lookup failed", e)
+                    }
+                }
+            }
+        }
+
+        if (!holdTimerScheduled) {
+            handler.postDelayed(holdStillRunnable, HOLD_STILL_MS)
+            holdTimerScheduled = true
+        }
+    }
+
+    /** Called on ACTION_UP. Returns true if popup is showing (icon should restore position). */
+    fun onDragEnd(): Boolean {
+        cancelTimers()
+        ocrJob?.cancel()
+        return popup.isShowing
+    }
+
+    fun dismiss() {
+        cancelTimers()
+        ocrJob?.cancel()
+        popup.dismiss()
+        lastWord = null
+        ocrLines = null
+    }
+
+    /** Called by popup's onDismiss — resets state without re-calling popup.dismiss(). */
+    fun onPopupDismissed() {
+        cancelTimers()
+        lastWord = null
+    }
+
+    fun destroy() {
+        cancelTimers()
+        scope.cancel()
+        popup.dismiss()
+        ocrManager.close()
+        ocrLines = null
+    }
+
+    // ── Internals ────────────────────────────────────────────────────────
+
+    private fun cancelTimers() {
+        handler.removeCallbacks(holdStillRunnable)
+        holdTimerScheduled = false
+        lookupJob?.cancel()
+    }
+
+    private val holdStillRunnable: Runnable = Runnable { onHoldStill() }
+
+    private fun onHoldStill() {
+        holdTimerScheduled = false
+        val lines = ocrLines
+        if (lines == null) {
+            // OCR not ready yet — retry shortly (with limit to avoid infinite loop)
+            if (holdRetryCount++ < MAX_HOLD_RETRIES) {
+                handler.postDelayed(holdStillRunnable, 100)
+                holdTimerScheduled = true
+            }
+            return
+        }
+        holdRetryCount = 0
+        lookupJob?.cancel()
+        lookupJob = scope.launch {
+            try {
+                performLookup(anchorX.toInt(), anchorY.toInt(), lines)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Lookup failed", e)
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun captureAndOcr() {
+        val service = PlayTranslateAccessibilityService.instance ?: return
+        Log.d(TAG, "Taking screenshot for full-screen OCR...")
+
+        val bitmap = withTimeoutOrNull(3000L) {
+            suspendCancellableCoroutine<Bitmap?> { cont ->
+                service.captureDisplay(displayId) { bmp ->
+                    if (cont.isActive) cont.resume(bmp) { bmp?.recycle() }
+                }
+            }
+        }
+        if (bitmap == null) {
+            Log.w(TAG, "Screenshot failed or timed out")
+            return
+        }
+
+        try {
+            val lines = ocrManager.recogniseWithPositions(bitmap, "ja")
+            if (lines == null) {
+                Log.d(TAG, "No text found on screen")
+                return
+            }
+            Log.d(TAG, "OCR found ${lines.size} lines")
+            ocrLines = lines
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /**
+     * Looks up the word at (fingerX, fingerY). If [dismissOnMiss] is true and no word
+     * is found, dismisses the popup. Returns true if a word was found and shown.
+     */
+    private suspend fun performLookup(fingerX: Int, fingerY: Int, lines: List<OcrManager.OcrLine>, dismissOnMiss: Boolean = false): Boolean {
+        val found = performLookupInner(fingerX, fingerY, lines)
+        if (!found && dismissOnMiss) {
+            withContext(Dispatchers.Main) {
+                popup.dismiss()
+                lastWord = null
+            }
+        }
+        return found
+    }
+
+    private suspend fun performLookupInner(fingerX: Int, fingerY: Int, lines: List<OcrManager.OcrLine>): Boolean {
+        // Find the line the finger is over
+        val hitLine = findLineAt(fingerX, fingerY, lines)
+
+        if (hitLine == null) {
+            Log.d(TAG, "No line near ($fingerX, $fingerY)")
+            return false
+        }
+
+        Log.d(TAG, "Hit line: \"${hitLine.text}\" at ($fingerX, $fingerY)")
+
+        val lineText = hitLine.text
+        val lineWidth = hitLine.bounds.width().toFloat()
+        val charWidth = lineWidth / lineText.length
+
+        // Tokenize the line (surface spans for position mapping, lookup forms for dictionary)
+        val service = PlayTranslateAccessibilityService.instance ?: return false
+        val dict = DictionaryManager.get(service)
+        val tokenPairs = dict.tokenizeWithSurfaces(lineText)
+
+        if (tokenPairs.isEmpty()) return false
+
+        // Find the token whose estimated screen position is closest to the finger
+        // Uses surface forms for position mapping in the original text
+        val surfaceTokens = tokenPairs.map { it.first }
+        val tokenMatch = findClosestToken(lineText, surfaceTokens, fingerX, hitLine.bounds.left, charWidth)
+        if (tokenMatch == null) return false
+
+        val matchedSurface = tokenMatch.first
+        val matchedIdx = tokenMatch.second
+        // Find the corresponding lookup form
+        val lookupForm = tokenPairs.firstOrNull { it.first == matchedSurface }?.second ?: matchedSurface
+
+        // Skip if same word already showing (counts as "found")
+        if (lookupForm == lastWord && popup.isShowing) return true
+
+        // Dictionary lookup using the base/dictionary form
+        val response = dict.lookup(lookupForm) ?: return false
+        val entry = response.data.firstOrNull() ?: return false
+
+        // Estimate the word's center X in screen coordinates (using surface span position)
+        val tokenCenterIdx = matchedIdx + matchedSurface.length / 2f
+        val wordCenterX = (hitLine.bounds.left + tokenCenterIdx * charWidth).toInt()
+
+        Log.d(TAG, "Found: $matchedSurface ($lookupForm) → ${entry.slug}")
+        lastWord = lookupForm
+
+        withContext(Dispatchers.Main) {
+            showPopup(entry, wordCenterX, fingerY)
+        }
+        return true
+    }
+
+    private fun findLineAt(x: Int, y: Int, lines: List<OcrManager.OcrLine>): OcrManager.OcrLine? {
+        var bestLine: OcrManager.OcrLine? = null
+        var bestDist = Long.MAX_VALUE
+        for (line in lines) {
+            val expanded = Rect(line.bounds).apply {
+                top -= HIT_EXPAND_Y_PX
+                bottom += HIT_EXPAND_Y_PX
+                left -= HIT_EXPAND_X_PX
+                right += HIT_EXPAND_X_PX
+            }
+            if (!expanded.contains(x, y)) continue
+            val cx = line.bounds.centerX()
+            val cy = line.bounds.centerY()
+            val dx = (x - cx).toLong()
+            val dy = (y - cy).toLong()
+            // Weight vertical distance 3× to strongly prefer the line the finger is actually on
+            val dist = dx * dx + dy * dy * 9
+            if (dist < bestDist) {
+                bestDist = dist
+                bestLine = line
+            }
+        }
+        return bestLine
+    }
+
+    /**
+     * Finds the token at [fingerX]. First checks if the finger falls within a token's
+     * estimated screen span; if not, falls back to the token with the nearest center.
+     */
+    private fun findClosestToken(
+        lineText: String, tokens: List<String>,
+        fingerX: Int, lineLeft: Int, charWidth: Float
+    ): Pair<String, Int>? {
+        // Build list of (token, startIdx, screenLeft, screenRight)
+        data class TokenPos(val token: String, val idx: Int, val left: Float, val right: Float)
+        val positioned = mutableListOf<TokenPos>()
+        var pos = 0
+        for (token in tokens) {
+            val idx = lineText.indexOf(token, pos)
+            if (idx < 0) continue
+            val left = lineLeft + idx * charWidth
+            val right = lineLeft + (idx + token.length) * charWidth
+            positioned += TokenPos(token, idx, left, right)
+            pos = idx + token.length
+        }
+        if (positioned.isEmpty()) return null
+
+        // Prefer exact hit (finger within token span)
+        val exact = positioned.firstOrNull { fingerX >= it.left && fingerX <= it.right }
+        if (exact != null) return exact.token to exact.idx
+
+        // Fallback: nearest center
+        val nearest = positioned.minByOrNull {
+            val center = (it.left + it.right) / 2f
+            abs(fingerX - center)
+        }
+        return nearest?.let { it.token to it.idx }
+    }
+
+    private fun showPopup(entry: JishoWord, fingerX: Int, fingerY: Int) {
+        val form = entry.japanese.firstOrNull()
+        val word = form?.word ?: form?.reading ?: entry.slug
+        val reading = form?.reading
+
+        val senses = entry.senses.map { sense ->
+            WordLookupPopup.SenseDisplay(
+                pos = sense.partsOfSpeech.joinToString(", "),
+                definition = sense.englishDefinitions.joinToString("; ")
+            )
+        }
+
+        popup.show(
+            word = word,
+            reading = reading,
+            senses = senses,
+            freqScore = entry.freqScore,
+            isCommon = entry.isCommon == true,
+            screenX = fingerX,
+            screenY = fingerY,
+            screenW = screenW,
+            screenH = screenH
+        )
+    }
+}

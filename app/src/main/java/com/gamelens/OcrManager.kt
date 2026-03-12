@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.Rect
 import com.gamelens.model.TextSegment
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -221,6 +222,59 @@ class OcrManager {
     private fun medianLineHeight(block: Text.TextBlock): Int {
         val heights = block.lines.mapNotNull { it.boundingBox?.height() }.sorted()
         return if (heights.isEmpty()) 0 else heights[heights.size / 2]
+    }
+
+    /** A line of OCR text with its bounding box in original (pre-scale) screen coordinates. */
+    data class OcrLine(
+        val text: String,
+        val bounds: Rect
+    )
+
+    /**
+     * Runs OCR and returns lines with bounding boxes mapped back to the original
+     * bitmap's coordinate space (undoing the internal upscale).
+     * Used by drag-to-lookup to hit-test finger position against text lines.
+     */
+    suspend fun recogniseWithPositions(bitmap: Bitmap, sourceLang: String = "ja"): List<OcrLine>? {
+        val scaled = scaleBitmapForOcr(bitmap)
+        val scaleFactor = scaled.width.toFloat() / bitmap.width
+        val enhanced = enhanceContrast(scaled)
+
+        val visionText: Text = try {
+            suspendCancellableCoroutine { cont ->
+                recognizer.process(InputImage.fromBitmap(enhanced, 0))
+                    .addOnSuccessListener { cont.resume(it) }
+                    .addOnFailureListener { cont.resumeWithException(it) }
+            }
+        } finally {
+            if (enhanced !== scaled) enhanced.recycle()
+            if (scaled !== bitmap) scaled.recycle()
+        }
+
+        if (visionText.textBlocks.isEmpty()) return null
+
+        val lines = mutableListOf<OcrLine>()
+        for (block in visionText.textBlocks) {
+            if (!block.text.any { isSourceLangChar(it, sourceLang) }) continue
+            for (line in block.lines) {
+                val b = line.boundingBox ?: continue
+                val text = line.elements
+                    .filter { !isUiDecoration(it.text) }
+                    .joinToString("") { it.text }
+                if (text.isBlank()) continue
+                // Map bounding box back to original bitmap coordinates
+                lines += OcrLine(
+                    text = text,
+                    bounds = Rect(
+                        (b.left / scaleFactor).toInt(),
+                        (b.top / scaleFactor).toInt(),
+                        (b.right / scaleFactor).toInt(),
+                        (b.bottom / scaleFactor).toInt()
+                    )
+                )
+            }
+        }
+        return lines.ifEmpty { null }
     }
 
     fun close() = recognizer.close()

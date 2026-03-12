@@ -10,11 +10,15 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.util.Log
 import android.view.Display
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import com.gamelens.ui.DragLookupController
 import com.gamelens.ui.FloatingOverlayIcon
 import com.gamelens.ui.RegionDragView
 import com.gamelens.ui.RegionOverlayView
+import com.gamelens.ui.WordLookupPopup
 
 /**
  * Minimal AccessibilityService whose only purpose is to call
@@ -41,6 +45,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var floatingIcon: FloatingOverlayIcon? = null
     private var floatingIconWm: WindowManager? = null
     private var floatingIconDisplayId: Int = -1
+    private var dragLookupController: DragLookupController? = null
 
     /** True while MainActivity is visible. Set only by notifyAppResumed/notifyAppStopped. */
     private var appVisible = false
@@ -127,6 +132,19 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
+
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && dragLookupController?.isPopupShowing == true) {
+            val src = event.source
+            if (src and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
+                || src and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+                || KeyEvent.isGamepadButton(event.keyCode)
+            ) {
+                dragLookupController?.dismiss()
+            }
+        }
+        return false // pass through to the game
+    }
 
     /** Called from MainActivity.onResume. */
     fun notifyAppResumed() {
@@ -227,6 +245,20 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             startActivity(intent)
         }
 
+        // Drag-to-lookup: OCR + dictionary popup while dragging
+        val popup = WordLookupPopup(displayCtx, wm)
+        val controller = DragLookupController(
+            displayId = display.displayId,
+            screenW = screenSize.x,
+            screenH = screenSize.y,
+            popup = popup
+        )
+        popup.onDismiss = { controller.onPopupDismissed() }
+        icon.onDragStart = { controller.onDragStart() }
+        icon.onDragMove = { rawX, rawY -> controller.onDragMove(rawX, rawY) }
+        icon.onDragEnd = { controller.onDragEnd() }
+        dragLookupController = controller
+
         try {
             wm.addView(icon, params)
             floatingIconWm = wm
@@ -238,6 +270,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     }
 
     fun hideFloatingIcon() {
+        dragLookupController?.destroy()
+        dragLookupController = null
         try { floatingIcon?.let { floatingIconWm?.removeView(it) } } catch (_: Exception) {}
         floatingIcon = null
         floatingIconWm = null
