@@ -8,6 +8,8 @@ import android.graphics.PixelFormat
 import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Display
 import android.view.InputDevice
@@ -16,9 +18,15 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.gamelens.ui.DragLookupController
 import com.gamelens.ui.FloatingOverlayIcon
+import com.gamelens.ui.OcrDebugOverlayView
 import com.gamelens.ui.RegionDragView
 import com.gamelens.ui.RegionOverlayView
 import com.gamelens.ui.WordLookupPopup
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 /**
@@ -47,7 +55,12 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var floatingIconWm: WindowManager? = null
     private var floatingIconDisplayId: Int = -1
     private var dragLookupController: DragLookupController? = null
-
+    private var debugOverlayView: OcrDebugOverlayView? = null
+    private var debugOverlayWm: WindowManager? = null
+    private var debugOcrManager: OcrManager? = null
+    private val debugHandler = Handler(Looper.getMainLooper())
+    private var debugRunning = false
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onServiceConnected() {
         instance = this
@@ -55,9 +68,11 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        stopDebugOcrLoop()
         hideRegionOverlay()
         hideRegionDragOverlay()
         hideFloatingIcon()
+        serviceScope.cancel()
         instance = null
         return super.onUnbind(intent)
     }
@@ -126,6 +141,106 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     }
 
     fun getDragRegion(): Array<Float> = dragView?.getFullRegion() ?: arrayOf(0.25f, 0.75f, 0.25f, 0.75f)
+
+    // ── Self-contained OCR debug overlay ─────────────────────────────────
+
+    private val DEBUG_INTERVAL_MS = 2000L
+    private val OVERLAY_HIDE_DELAY_MS = 50L
+
+    /**
+     * Starts a self-contained loop: capture → OCR → draw bounding boxes.
+     * Completely independent of the translation pipeline.
+     */
+    fun startDebugOcrLoop() {
+        if (debugRunning) return
+        debugRunning = true
+        if (debugOcrManager == null) debugOcrManager = OcrManager()
+        scheduleDebugCapture()
+    }
+
+    fun stopDebugOcrLoop() {
+        debugRunning = false
+        debugHandler.removeCallbacksAndMessages(null)
+        hideDebugOverlay()
+        debugOcrManager?.close()
+        debugOcrManager = null
+    }
+
+    private fun scheduleDebugCapture() {
+        if (!debugRunning) return
+        debugHandler.postDelayed({ runDebugCapture() }, DEBUG_INTERVAL_MS)
+    }
+
+    private fun runDebugCapture() {
+        if (!debugRunning) return
+        val prefs = Prefs(this)
+        val displayId = prefs.captureDisplayId
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        val display = dm.getDisplay(displayId) ?: run { scheduleDebugCapture(); return }
+
+        captureDisplay(displayId) { bitmap ->
+            if (bitmap == null || !debugRunning) {
+                bitmap?.recycle()
+                scheduleDebugCapture()
+                return@captureDisplay
+            }
+            val screenshotW = bitmap.width
+            val screenshotH = bitmap.height
+
+            serviceScope.launch {
+                val ocr = debugOcrManager ?: run { bitmap.recycle(); scheduleDebugCapture(); return@launch }
+                val result = try {
+                    kotlinx.coroutines.withContext(Dispatchers.Default) {
+                        ocr.recognise(bitmap, prefs.sourceLang, collectDebugBoxes = true)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Debug OCR failed: ${e.message}")
+                    null
+                } finally {
+                    bitmap.recycle()
+                }
+
+                val boxes = result?.debugBoxes
+                if (boxes != null && debugRunning) {
+                    showDebugOverlay(display, boxes, 0, 0, screenshotW, screenshotH)
+                } else {
+                    hideDebugOverlay()
+                }
+                scheduleDebugCapture()
+            }
+        }
+    }
+
+    private fun showDebugOverlay(
+        display: Display,
+        boxes: OcrManager.OcrDebugBoxes,
+        cropLeft: Int, cropTop: Int,
+        screenshotW: Int, screenshotH: Int
+    ) {
+        hideDebugOverlay()
+        val wm = createDisplayContext(display).getSystemService(WindowManager::class.java) ?: return
+        val view = OcrDebugOverlayView(this).apply {
+            setBoxes(boxes, cropLeft, cropTop, screenshotW, screenshotH)
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        wm.addView(view, params)
+        debugOverlayWm = wm
+        debugOverlayView = view
+    }
+
+    fun hideDebugOverlay() {
+        try { debugOverlayView?.let { debugOverlayWm?.removeView(it) } } catch (_: Exception) {}
+        debugOverlayView = null
+        debugOverlayWm = null
+    }
 
     // ── Floating overlay icon ─────────────────────────────────────────────
 
@@ -267,27 +382,39 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             return
         }
 
-        takeScreenshot(
-            displayId,
-            mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshot: ScreenshotResult) {
-                    // Copy HardwareBuffer → software Bitmap off the main thread
-                    bitmapExecutor.execute {
-                        val bitmap = Bitmap
-                            .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                            ?.copy(Bitmap.Config.ARGB_8888, false)
-                        screenshot.hardwareBuffer.close()
-                        onResult(bitmap)
+        // Hide the debug overlay so it doesn't appear in the screenshot.
+        // The floating icon is NOT hidden — toggling its visibility mid-drag
+        // breaks touch event delivery and makes it undraggable.
+        val hadDebugOverlay = debugOverlayView != null
+        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.INVISIBLE
+
+        // Wait for the compositor to process the visibility change before capturing
+        val delay = if (hadDebugOverlay) OVERLAY_HIDE_DELAY_MS else 0L
+        debugHandler.postDelayed({
+            takeScreenshot(
+                displayId,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.VISIBLE
+                        // Copy HardwareBuffer → software Bitmap off the main thread
+                        bitmapExecutor.execute {
+                            val bitmap = Bitmap
+                                .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                                ?.copy(Bitmap.Config.ARGB_8888, false)
+                            screenshot.hardwareBuffer.close()
+                            onResult(bitmap)
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.VISIBLE
+                        Log.e(TAG, "takeScreenshot failed on display $displayId, code=$errorCode")
+                        onResult(null)
                     }
                 }
-
-                override fun onFailure(errorCode: Int) {
-                    Log.e(TAG, "takeScreenshot failed on display $displayId, code=$errorCode")
-                    onResult(null)
-                }
-            }
-        )
+            )
+        }, delay)
     }
 
     companion object {

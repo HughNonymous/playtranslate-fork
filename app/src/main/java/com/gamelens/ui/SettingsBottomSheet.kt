@@ -252,6 +252,17 @@ class SettingsBottomSheet : DialogFragment() {
                 prefs.debugForceSingleScreen = checked
                 onScreenModeChanged?.invoke()
             }
+            val switchShowOcrBoxes = view.findViewById<Switch>(R.id.switchShowOcrBoxes)
+            switchShowOcrBoxes.isChecked = prefs.debugShowOcrBoxes
+            switchShowOcrBoxes.setOnCheckedChangeListener { _, checked ->
+                prefs.debugShowOcrBoxes = checked
+                val a11y = PlayTranslateAccessibilityService.instance
+                if (checked) {
+                    a11y?.startDebugOcrLoop()
+                } else {
+                    a11y?.stopDebugOcrLoop()
+                }
+            }
         }
     }
 

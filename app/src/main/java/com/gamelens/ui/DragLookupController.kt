@@ -7,8 +7,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.gamelens.AnkiManager
+import com.gamelens.MainActivity
 import com.gamelens.OcrManager
 import com.gamelens.PlayTranslateAccessibilityService
+import com.gamelens.Prefs
 import com.gamelens.dictionary.DictionaryManager
 import com.gamelens.model.JishoWord
 import kotlinx.coroutines.*
@@ -73,6 +75,12 @@ class DragLookupController(
         private const val HIT_EXPAND_X_PX = 80
         /** Vertical expansion — kept small to avoid grabbing adjacent lines. */
         private const val HIT_EXPAND_Y_PX = 30
+
+        /** Sentence-ending punctuation for extracting sentences from group text. */
+        private val SENTENCE_END_PUNCTUATION = setOf(
+            '.', '!', '?', '\u2026',   // Latin / general (… = \u2026)
+            '\u3002', '\uFF01', '\uFF1F' // 。！？ CJK fullwidth
+        )
     }
 
     private val wobbleRadiusPx: Float by lazy {
@@ -299,8 +307,15 @@ class DragLookupController(
         Log.d(TAG, "Found: $matchedSurface ($lookupForm) → ${entry.slug}")
         lastWord = lookupForm
 
+        // Build the full group text and extract the sentence containing the matched word
+        val groupText = lines
+            .filter { it.groupIndex == hitLine.groupIndex }
+            .joinToString("") { it.text }
+        val sentence = extractSentence(groupText, hitLine.text, matchedSurface, matchedIdx)
+
         withContext(Dispatchers.Main) {
             showPopup(entry, wordCenterX, fingerY)
+            sendLineToMainApp(sentence)
         }
         return true
     }
@@ -388,6 +403,56 @@ class DragLookupController(
             screenW = screenW,
             screenH = screenH
         )
+    }
+
+    /**
+     * Extracts the sentence containing [word] from the combined [groupText].
+     * Splits on sentence-ending punctuation (.!?…。！？) and finds the sentence
+     * that contains the word at its position within [lineText] at [wordIdxInLine].
+     */
+    private fun extractSentence(
+        groupText: String,
+        lineText: String,
+        word: String,
+        wordIdxInLine: Int
+    ): String {
+        // Find where the line text appears in the group text
+        val lineStart = groupText.indexOf(lineText)
+        if (lineStart < 0) return groupText  // fallback: return full group
+
+        // Absolute position of the word in the group text
+        val wordPos = lineStart + wordIdxInLine
+
+        // Find sentence boundaries by scanning for sentence-ending punctuation
+        var sentenceStart = 0
+        for (i in wordPos - 1 downTo 0) {
+            if (groupText[i] in SENTENCE_END_PUNCTUATION) {
+                sentenceStart = i + 1
+                break
+            }
+        }
+
+        var sentenceEnd = groupText.length
+        for (i in wordPos until groupText.length) {
+            if (groupText[i] in SENTENCE_END_PUNCTUATION) {
+                sentenceEnd = i + 1  // include the punctuation
+                break
+            }
+        }
+
+        return groupText.substring(sentenceStart, sentenceEnd).trim()
+    }
+
+    private fun sendLineToMainApp(lineText: String) {
+        val service = PlayTranslateAccessibilityService.instance ?: return
+        if (Prefs.isSingleScreen(service)) return  // only in dual-screen mode
+        val intent = Intent(service, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_DRAG_SENTENCE
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(MainActivity.EXTRA_DRAG_LINE_TEXT, lineText)
+            putExtra(MainActivity.EXTRA_DRAG_SCREENSHOT_PATH, screenshotPath)
+        }
+        service.startActivity(intent)
     }
 
     private fun launchAnkiReview() {

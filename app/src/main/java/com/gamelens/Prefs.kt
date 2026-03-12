@@ -101,6 +101,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_DEBUG_FORCE_SINGLE_SCREEN, false)
         set(v) = sp.edit().putBoolean(KEY_DEBUG_FORCE_SINGLE_SCREEN, v).apply()
 
+    /** Debug-only: show OCR bounding boxes overlaid on the game screen after each capture. */
+    var debugShowOcrBoxes: Boolean
+        get() = sp.getBoolean(KEY_DEBUG_SHOW_OCR_BOXES, false)
+        set(v) = sp.edit().putBoolean(KEY_DEBUG_SHOW_OCR_BOXES, v).apply()
+
     /** Set before recreate() so MainActivity suppresses the window transition animation. */
     var suppressNextTransition: Boolean
         get() = sp.getBoolean(KEY_SUPPRESS_TRANSITION, false)
@@ -165,6 +170,7 @@ class Prefs(context: Context) {
         private const val KEY_OVERLAY_ICON_FRACTION  = "overlay_icon_fraction"
         private const val KEY_SUPPRESS_TRANSITION            = "suppress_next_transition"
         private const val KEY_DEBUG_FORCE_SINGLE_SCREEN      = "debug_force_single_screen"
+        private const val KEY_DEBUG_SHOW_OCR_BOXES           = "debug_show_ocr_boxes"
 
         /** Single source of truth for single-screen detection. */
         fun isSingleScreen(context: Context): Boolean {

@@ -38,6 +38,7 @@ import androidx.lifecycle.lifecycleScope
 import com.gamelens.BuildConfig
 import com.gamelens.dictionary.Deinflector
 import com.gamelens.dictionary.DictionaryManager
+import com.gamelens.model.TextSegment
 import com.gamelens.model.TranslationResult
 import com.gamelens.ui.ClickableTextView
 import com.gamelens.AnkiManager
@@ -231,6 +232,13 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             DictionaryManager.get(applicationContext).preload()
             Deinflector.preload()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent?.action == ACTION_DRAG_SENTENCE) {
+            handleDragSentence(intent)
         }
     }
 
@@ -631,6 +639,92 @@ class MainActivity : AppCompatActivity() {
         }
 
         ensureConfigured()
+    }
+
+    // ── Drag-to-lookup sentence passthrough ──────────────────────────────
+
+    /**
+     * Called when the floating icon drag-to-lookup finds a word.
+     * Displays the full line in the translation view as if it were a captured sentence.
+     */
+    private fun handleDragSentence(intent: Intent) {
+        val lineText = intent.getStringExtra(EXTRA_DRAG_LINE_TEXT) ?: return
+        val screenshotPath = intent.getStringExtra(EXTRA_DRAG_SCREENSHOT_PATH)
+
+        // Pause live mode if active
+        if (isLiveMode) pauseLiveMode()
+
+        // Build segments from the line text (one segment per character for tappability)
+        val segments = lineText.map { TextSegment(it.toString()) }
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(java.util.Date())
+
+        // Show original text immediately
+        tvOriginal.setSegments(segments)
+        tvOriginal.onTapAtOffset = { offset -> showEditOverlay(offset) }
+        labelOriginal.text = langDisplayName(selectedSourceLang())
+        labelTranslation.text = langDisplayName(selectedTargetLang())
+        statusContainer.visibility = View.GONE
+        resultsContent.visibility = View.VISIBLE
+        suppressScrollPause = true
+        resultsContent.scrollTo(0, 0)
+        resultsContent.post { suppressScrollPause = false }
+        btnClear.visibility = View.VISIBLE
+        btnMainAddToAnki.isEnabled = false
+
+        // Show "translating..." while we wait
+        tvTranslation.text = getString(R.string.status_translating)
+        tvTranslationNote.text = ""
+        tvTranslationNote.visibility = View.GONE
+        if (prefs.hideTranslation) {
+            translationSection.visibility = View.GONE
+            translationHiddenSection.visibility = View.VISIBLE
+            btnRevealTranslation.isEnabled = true
+            btnRevealTranslation.text = getString(R.string.btn_reveal_translation)
+        } else {
+            translationSection.visibility = View.VISIBLE
+            translationHiddenSection.visibility = View.GONE
+        }
+
+        // Translate and look up words
+        startWordLookups(lineText)
+
+        val svc = captureService
+        if (svc != null && svc.isConfigured && !prefs.hideTranslation) {
+            lifecycleScope.launch {
+                try {
+                    val (translated, note) = svc.translateOnce(lineText)
+                    lastResult = TranslationResult(
+                        originalText = lineText,
+                        segments = segments,
+                        translatedText = translated,
+                        timestamp = timestamp,
+                        screenshotPath = screenshotPath,
+                        note = note
+                    )
+                    tvTranslation.text = translated
+                    tvTranslationNote.text = note ?: ""
+                    tvTranslationNote.visibility = if (note != null) View.VISIBLE else View.GONE
+                } catch (e: Exception) {
+                    tvTranslation.text = ""
+                    lastResult = TranslationResult(
+                        originalText = lineText,
+                        segments = segments,
+                        translatedText = "",
+                        timestamp = timestamp,
+                        screenshotPath = screenshotPath
+                    )
+                }
+            }
+        } else {
+            tvTranslation.text = ""
+            lastResult = TranslationResult(
+                originalText = lineText,
+                segments = segments,
+                translatedText = "",
+                timestamp = timestamp,
+                screenshotPath = screenshotPath
+            )
+        }
     }
 
     // ── Accessibility service flow ─────────────────────────────────────────
@@ -1222,4 +1316,9 @@ class MainActivity : AppCompatActivity() {
         ((row as? LinearLayout)?.getChildAt(0) as? RadioButton)?.isChecked = highlighted
     }
 
+    companion object {
+        const val ACTION_DRAG_SENTENCE = "com.gamelens.ACTION_DRAG_SENTENCE"
+        const val EXTRA_DRAG_LINE_TEXT = "extra_drag_line_text"
+        const val EXTRA_DRAG_SCREENSHOT_PATH = "extra_drag_screenshot_path"
+    }
 }
