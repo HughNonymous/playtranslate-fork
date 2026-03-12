@@ -19,6 +19,7 @@ import com.gamelens.ui.FloatingOverlayIcon
 import com.gamelens.ui.RegionDragView
 import com.gamelens.ui.RegionOverlayView
 import com.gamelens.ui.WordLookupPopup
+import java.util.concurrent.Executors
 
 /**
  * Minimal AccessibilityService whose only purpose is to call
@@ -301,6 +302,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
      *
      * Must be called on a thread that has a Looper (e.g. main thread).
      */
+    /** Single background thread for bitmap copies to keep the main thread free. */
+    private val bitmapExecutor = Executors.newSingleThreadExecutor()
+
     fun captureDisplay(displayId: Int, onResult: (Bitmap?) -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.w(TAG, "takeScreenshot requires API 30+")
@@ -313,12 +317,14 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             mainExecutor,
             object : TakeScreenshotCallback {
                 override fun onSuccess(screenshot: ScreenshotResult) {
-                    // HardwareBuffer → software Bitmap so ML Kit can read pixels
-                    val bitmap = Bitmap
-                        .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                        ?.copy(Bitmap.Config.ARGB_8888, false)
-                    screenshot.hardwareBuffer.close()
-                    onResult(bitmap)
+                    // Copy HardwareBuffer → software Bitmap off the main thread
+                    bitmapExecutor.execute {
+                        val bitmap = Bitmap
+                            .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                            ?.copy(Bitmap.Config.ARGB_8888, false)
+                        screenshot.hardwareBuffer.close()
+                        onResult(bitmap)
+                    }
                 }
 
                 override fun onFailure(errorCode: Int) {

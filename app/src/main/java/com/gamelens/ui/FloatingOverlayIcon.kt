@@ -2,16 +2,20 @@ package com.gamelens.ui
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import com.gamelens.R
 import kotlin.math.abs
 
 /**
@@ -39,24 +43,20 @@ class FloatingOverlayIcon(context: Context) : View(context) {
 
     // ── Normal mode paints ──────────────────────────────────────────────
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00BCD4")
+        color = Color.parseColor("#CC000000")
         style = Paint.Style.FILL
     }
-    private val letterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = 24 * resources.displayMetrics.density
-        textAlign = Paint.Align.CENTER
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-    }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val iconBitmap: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.ic_floating_icon)
 
     // ── Drag mode paints (ring + magnifying glass) ──────────────────────
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00BCD4")
+        color = Color.parseColor("#CCFFFFFF")
         style = Paint.Style.STROKE
         strokeWidth = 3 * resources.displayMetrics.density
     }
     private val magGlassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00BCD4")
+        color = Color.parseColor("#CCFFFFFF")
         style = Paint.Style.STROKE
         strokeWidth = 2.5f * resources.displayMetrics.density
         strokeCap = Paint.Cap.ROUND
@@ -92,6 +92,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     private var inDragMode = false
     /** Whether onDragStart has already been called for this gesture. */
     private var dragStartFired = false
+    /** Current snapped edge — used to position icon on the visible half. */
+    private var currentEdge = Edge.RIGHT
 
     private val tapThresholdPx = TAP_THRESHOLD_DP * resources.displayMetrics.density
     /** Inset from top/bottom to avoid system gesture zones. */
@@ -122,10 +124,20 @@ class FloatingOverlayIcon(context: Context) : View(context) {
             // Small magnifying glass icon in center
             drawMagnifyingGlass(canvas, center, center, r * 0.4f)
         } else {
-            // Normal: solid circle with "G"
             canvas.drawCircle(center, center, r, circlePaint)
-            val textY = center - (letterPaint.descent() + letterPaint.ascent()) / 2f
-            canvas.drawText("G", center, textY, letterPaint)
+            // Draw icon bitmap centered on the visible half, nudged toward screen edge
+            val nudge = 3 * resources.displayMetrics.density
+            val cx = if (currentEdge == Edge.LEFT) {
+                center + circleHalf / 2f - nudge
+            } else {
+                center - circleHalf / 2f + nudge
+            }
+            val targetH = circleSizePx * 0.5f
+            val scale = targetH / iconBitmap.height
+            val drawW = iconBitmap.width * scale
+            val drawH = targetH
+            val dst = RectF(cx - drawW / 2f, center - drawH / 2f, cx + drawW / 2f, center + drawH / 2f)
+            canvas.drawBitmap(iconBitmap, null, dst, bitmapPaint)
         }
     }
 
@@ -280,6 +292,10 @@ class FloatingOverlayIcon(context: Context) : View(context) {
         val p = params ?: return
         val startX = p.x
         val startY = p.y
+        if (edge != null) {
+            currentEdge = edge
+            invalidate()
+        }
         snapAnimator?.cancel()
         snapAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = SNAP_DURATION_MS
@@ -311,6 +327,7 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     /** Sets position from persisted edge + fraction without animation. */
     fun setPosition(edgeOrdinal: Int, fraction: Float) {
         val edge = if (edgeOrdinal == Edge.LEFT.ordinal) Edge.LEFT else Edge.RIGHT
+        currentEdge = edge
         val f = if (fraction in 0f..1f) fraction else 0.5f
         val p = params ?: return
         p.x = if (edge == Edge.LEFT) -viewHalf else screenW - viewHalf

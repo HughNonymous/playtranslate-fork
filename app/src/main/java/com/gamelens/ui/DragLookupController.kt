@@ -51,7 +51,7 @@ class DragLookupController(
 
     companion object {
         private const val TAG = "DragLookup"
-        private const val HOLD_STILL_MS = 350L
+        private const val HOLD_STILL_MS = 200L
         /** Wobble radius — finger movement within this distance doesn't reset the timer. */
         private const val WOBBLE_RADIUS_DP = 8f
         /** Horizontal expansion around finger for line hit-testing. */
@@ -204,17 +204,20 @@ class DragLookupController(
             return
         }
 
-        try {
-            val lines = ocrManager.recogniseWithPositions(bitmap, "ja")
-            if (lines == null) {
-                Log.d(TAG, "No text found on screen")
-                return
+        // Run bitmap processing + OCR off the main thread to avoid drag stutter
+        val lines = withContext(Dispatchers.Default) {
+            try {
+                ocrManager.recogniseWithPositions(bitmap, "ja")
+            } finally {
+                bitmap.recycle()
             }
-            Log.d(TAG, "OCR found ${lines.size} lines")
-            ocrLines = lines
-        } finally {
-            bitmap.recycle()
         }
+        if (lines == null) {
+            Log.d(TAG, "No text found on screen")
+            return
+        }
+        Log.d(TAG, "OCR found ${lines.size} lines")
+        ocrLines = lines
     }
 
     /**

@@ -181,7 +181,7 @@ class SettingsBottomSheet : DialogFragment() {
                 a11y.captureDisplay(display.displayId) { bitmap ->
                     if (bitmap != null) {
                         displayThumbnails[display.displayId] = scaleThumbnail(bitmap)
-                        if (isAdded) buildDisplayRows(prefs)
+                        view?.post { if (isAdded) buildDisplayRows(prefs) }
                     } else if (display.displayId == myDisplayId) {
                         captureActivityWindow { thumb ->
                             displayThumbnails[display.displayId] = thumb
