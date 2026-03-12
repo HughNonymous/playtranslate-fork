@@ -93,7 +93,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     /** Whether onDragStart has already been called for this gesture. */
     private var dragStartFired = false
     /** Current snapped edge — used to position icon on the visible half. */
-    private var currentEdge = Edge.RIGHT
+    var currentEdge = Edge.RIGHT
+        private set
 
     private val tapThresholdPx = TAP_THRESHOLD_DP * resources.displayMetrics.density
     /** Inset from top/bottom to avoid system gesture zones. */

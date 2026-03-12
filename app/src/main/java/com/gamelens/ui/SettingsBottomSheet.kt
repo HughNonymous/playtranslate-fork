@@ -1,6 +1,7 @@
 package com.gamelens.ui
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
@@ -47,6 +48,8 @@ class SettingsBottomSheet : DialogFragment() {
     var onDisplayChanged: (() -> Unit)? = null
     /** Called when the hide-live-mode switch changes. */
     var onHideLiveModeChanged: (() -> Unit)? = null
+
+    private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     /** Called when the hide-translation switch changes. */
     var onHideTranslationChanged: (() -> Unit)? = null
     /** Called when the debug force-single-screen toggle changes. */
@@ -85,6 +88,9 @@ class SettingsBottomSheet : DialogFragment() {
         super.onViewCreated(view, savedInstanceState)
 
         val hideDismiss = arguments?.getBoolean(ARG_HIDE_DISMISS, false) ?: false
+        if (Prefs.isSingleScreen(requireContext())) {
+            view.findViewById<TextView>(R.id.tvSettingsTitle).text = getString(R.string.app_name)
+        }
         val closeBtn = view.findViewById<View>(R.id.btnCloseSettings)
         if (hideDismiss) {
             closeBtn.visibility = View.GONE
@@ -126,6 +132,24 @@ class SettingsBottomSheet : DialogFragment() {
 
         // ── Overlay icon toggle ──────────────────────────────────────────
         val switchOverlayIcon = view.findViewById<Switch>(R.id.switchOverlayIcon)
+        val tvOverlayIconTitle = view.findViewById<TextView>(R.id.tvOverlayIconTitle)
+        val tvOverlayIconHint = view.findViewById<TextView>(R.id.tvOverlayIconHint)
+        val isSingle = Prefs.isSingleScreen(requireContext())
+        tvOverlayIconHint.setText(
+            if (isSingle) R.string.settings_overlay_icon_hint_single
+            else R.string.settings_overlay_icon_hint_dual
+        )
+        // Make subtext same color as title (both modes)
+        tvOverlayIconHint.setTextColor(requireContext().themeColor(R.attr.colorTextPrimary))
+        // Double text sizes in single-screen mode
+        if (isSingle) {
+            tvOverlayIconTitle.textSize = 21f
+            tvOverlayIconHint.textSize = 15f
+            val rowOverlayIcon = view.findViewById<LinearLayout>(R.id.rowOverlayIcon)
+            val dp = resources.displayMetrics.density
+            val pad = (18 * dp).toInt()
+            rowOverlayIcon.setPadding(pad, pad, pad, pad)
+        }
         switchOverlayIcon.isChecked = prefs.showOverlayIcon && PlayTranslateAccessibilityService.isEnabled
         switchOverlayIcon.setOnCheckedChangeListener { _, checked ->
             if (checked && !PlayTranslateAccessibilityService.isEnabled) {
@@ -142,6 +166,9 @@ class SettingsBottomSheet : DialogFragment() {
             }
             prefs.showOverlayIcon = checked
             PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
+        }
+        view.findViewById<View>(R.id.rowOverlayIcon).setOnClickListener {
+            switchOverlayIcon.toggle()
         }
 
         // ── DeepL key (auto-save on text change) ─────────────────────────
@@ -230,6 +257,9 @@ class SettingsBottomSheet : DialogFragment() {
             prefs.hideLiveMode = checked
             onHideLiveModeChanged?.invoke()
         }
+        view.findViewById<View>(R.id.rowHideLiveMode).setOnClickListener {
+            switchHideLiveMode.toggle()
+        }
 
         // ── Hide translation (auto-save on toggle) ────────────────────────
         val switchHideTranslation = view.findViewById<Switch>(R.id.switchHideTranslation)
@@ -237,6 +267,9 @@ class SettingsBottomSheet : DialogFragment() {
         switchHideTranslation.setOnCheckedChangeListener { _, checked ->
             prefs.hideTranslation = checked
             onHideTranslationChanged?.invoke()
+        }
+        view.findViewById<View>(R.id.rowHideTranslation).setOnClickListener {
+            switchHideTranslation.toggle()
         }
 
         // ── Theme picker ──────────────────────────────────────────────────
@@ -252,6 +285,9 @@ class SettingsBottomSheet : DialogFragment() {
                 prefs.debugForceSingleScreen = checked
                 onScreenModeChanged?.invoke()
             }
+            view.findViewById<View>(R.id.rowForceSingleScreen).setOnClickListener {
+                switchForceSingleScreen.toggle()
+            }
             val switchShowOcrBoxes = view.findViewById<Switch>(R.id.switchShowOcrBoxes)
             switchShowOcrBoxes.isChecked = prefs.debugShowOcrBoxes
             switchShowOcrBoxes.setOnCheckedChangeListener { _, checked ->
@@ -263,6 +299,9 @@ class SettingsBottomSheet : DialogFragment() {
                     a11y?.stopDebugOcrLoop()
                 }
             }
+            view.findViewById<View>(R.id.rowShowOcrBoxes).setOnClickListener {
+                switchShowOcrBoxes.toggle()
+            }
         }
     }
 
@@ -271,6 +310,21 @@ class SettingsBottomSheet : DialogFragment() {
         refreshAnkiSection()
         refreshCaptureMethodSection()
         refreshOverlayIconSwitch()
+
+        val ctx = context ?: return
+        val sp = ctx.getSharedPreferences("playtranslate_prefs", Context.MODE_PRIVATE)
+        prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "show_overlay_icon") refreshOverlayIconSwitch()
+        }
+        sp.registerOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        val ctx = context ?: return
+        val sp = ctx.getSharedPreferences("playtranslate_prefs", Context.MODE_PRIVATE)
+        prefsListener?.let { sp.unregisterOnSharedPreferenceChangeListener(it) }
+        prefsListener = null
     }
 
     private fun refreshOverlayIconSwitch() {

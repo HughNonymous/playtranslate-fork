@@ -17,6 +17,7 @@
         android:paddingEnd="4dp">
 
         <TextView
+            android:id="@+id/tvSettingsTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -57,41 +58,64 @@
             android:orientation="vertical"
             android:padding="20dp">
 
-            <!-- Overlay icon toggle -->
+            <!-- Overlay icon toggle (highlighted card) -->
             <LinearLayout
+                android:id="@+id/rowOverlayIcon"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:background="?attr/colorBgCard"
+                android:padding="12dp">
 
-                <TextView
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="@string/settings_show_overlay_icon"
-                    android:textColor="?attr/colorTextPrimary"
-                    android:textSize="14sp" />
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvOverlayIconTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_show_overlay_icon"
+                        android:textColor="?attr/colorTextPrimary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/tvOverlayIconHint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_overlay_icon_hint_dual"
+                        android:textColor="?attr/colorTextHint"
+                        android:textSize="10sp"
+                        android:lineSpacingMultiplier="1.3"
+                        android:layout_marginTop="4dp" />
+
+                </LinearLayout>
 
                 <Switch
                     android:id="@+id/switchOverlayIcon"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" />
 
             </LinearLayout>
 
             <TextView
+                android:id="@+id/tvOverlayIconTip"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_overlay_icon_hint"
+                android:text="— Drag the icon over words for quick dictionary lookups"
                 android:textColor="?attr/colorTextHint"
                 android:textSize="10sp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginTop="8dp" />
 
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
                 android:background="?attr/colorBgDivider"
+                android:layout_marginTop="16dp"
                 android:layout_marginBottom="16dp" />
 
             <!-- Capture method section (hidden when accessibility is enabled) -->
@@ -397,6 +421,7 @@
 
             <!-- Live mode toggle -->
             <LinearLayout
+                android:id="@+id/rowHideLiveMode"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
@@ -428,6 +453,7 @@
 
             <!-- Hide translation toggle -->
             <LinearLayout
+                android:id="@+id/rowHideTranslation"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
@@ -507,6 +533,7 @@
                     android:layout_marginBottom="12dp" />
 
                 <LinearLayout
+                    android:id="@+id/rowForceSingleScreen"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -529,6 +556,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/rowShowOcrBoxes"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"

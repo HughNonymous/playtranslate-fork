@@ -17,6 +17,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.gamelens.ui.DragLookupController
+import com.gamelens.ui.FloatingIconMenu
 import com.gamelens.ui.FloatingOverlayIcon
 import com.gamelens.ui.OcrDebugOverlayView
 import com.gamelens.ui.RegionDragView
@@ -55,6 +56,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var floatingIconWm: WindowManager? = null
     private var floatingIconDisplayId: Int = -1
     private var dragLookupController: DragLookupController? = null
+    private var floatingMenu: FloatingIconMenu? = null
+    private var floatingMenuWm: WindowManager? = null
     private var debugOverlayView: OcrDebugOverlayView? = null
     private var debugOverlayWm: WindowManager? = null
     private var debugOcrManager: OcrManager? = null
@@ -71,6 +74,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         stopDebugOcrLoop()
         hideRegionOverlay()
         hideRegionDragOverlay()
+        dismissFloatingMenu()
         hideFloatingIcon()
         serviceScope.cancel()
         instance = null
@@ -310,10 +314,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             prefs.overlayIconFraction = fraction
         }
         icon.onTap = {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            startActivity(intent)
+            showFloatingMenu(display, icon)
         }
 
         // Drag-to-lookup: OCR + dictionary popup while dragging
@@ -347,6 +348,47 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         floatingIcon = null
         floatingIconWm = null
         floatingIconDisplayId = -1
+    }
+
+    // ── Floating icon menu ────────────────────────────────────────────────
+
+    private fun showFloatingMenu(display: Display, icon: FloatingOverlayIcon) {
+        dismissFloatingMenu()
+        val wm = createDisplayContext(display).getSystemService(WindowManager::class.java) ?: return
+        val screenSize = getDisplaySize(display)
+        val menu = FloatingIconMenu(createDisplayContext(display))
+        menu.isSingleScreen = Prefs.isSingleScreen(this)
+
+        menu.onHideIcon = {
+            dismissFloatingMenu()
+            Prefs(this).showOverlayIcon = false
+            hideFloatingIcon()
+        }
+        menu.onDismiss = { dismissFloatingMenu() }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+
+        wm.addView(menu, params)
+        floatingMenuWm = wm
+        floatingMenu = menu
+
+        // Compute icon center in screen coords
+        val p = icon.params
+        val iconCx = (p?.x ?: 0) + icon.viewSizePx / 2
+        val iconCy = (p?.y ?: 0) + icon.viewSizePx / 2
+        menu.positionNearIcon(iconCx, iconCy, icon.currentEdge, screenSize.x, screenSize.y)
+    }
+
+    private fun dismissFloatingMenu() {
+        try { floatingMenu?.let { floatingMenuWm?.removeView(it) } } catch (_: Exception) {}
+        floatingMenu = null
+        floatingMenuWm = null
     }
 
     /** Returns the capture display (game screen), or the only display on single-screen. */
