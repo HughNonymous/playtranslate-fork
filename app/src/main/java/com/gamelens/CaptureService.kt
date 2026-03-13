@@ -3,6 +3,10 @@ package com.gamelens
 import android.app.Notification
 import android.app.NotificationChannel
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -314,8 +318,9 @@ class CaptureService : Service() {
                 Bitmap.createBitmap(raw, left, top, (right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1))
             else raw
 
-            val ocrResult = ocrManager.recognise(bitmap, sourceLang)
-            if (bitmap !== raw) bitmap.recycle()
+            val ocrBitmap = blackoutFloatingIcon(bitmap, left, top)
+            val ocrResult = ocrManager.recognise(ocrBitmap, sourceLang)
+            if (ocrBitmap !== raw) ocrBitmap.recycle()
 
             if (ocrResult == null) {
                 // No text at all — reset dedup so the next hit retranslates, then notify.
@@ -409,6 +414,32 @@ class CaptureService : Service() {
             private set
     }
 
+    /**
+     * Blacks out the floating icon area so OCR doesn't read the icon's text.
+     * Returns a mutable bitmap with the icon area painted black. If the icon
+     * is not in the crop area, returns the original bitmap unchanged.
+     *
+     * @param bitmap   The (possibly immutable) cropped bitmap.
+     * @param cropLeft Left offset of the crop in full-screen coordinates.
+     * @param cropTop  Top offset of the crop in full-screen coordinates.
+     */
+    private fun blackoutFloatingIcon(bitmap: Bitmap, cropLeft: Int = 0, cropTop: Int = 0): Bitmap {
+        val iconRect = PlayTranslateAccessibilityService.instance?.getFloatingIconRect()
+            ?: return bitmap
+        // Shift icon rect into the cropped bitmap's coordinate space
+        val left = (iconRect.left - cropLeft).coerceAtLeast(0)
+        val top = (iconRect.top - cropTop).coerceAtLeast(0)
+        val right = (iconRect.right - cropLeft).coerceAtMost(bitmap.width)
+        val bottom = (iconRect.bottom - cropTop).coerceAtMost(bitmap.height)
+        if (left >= right || top >= bottom) return bitmap  // icon not in this crop
+        val mutable = if (bitmap.isMutable) bitmap
+            else bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true).also { bitmap.recycle() }
+        Canvas(mutable).drawRect(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat(), blackoutPaint)
+        return mutable
+    }
+
+    private val blackoutPaint = Paint().apply { color = Color.BLACK }
+
     fun resetConfiguration() {
         translationManager?.close()
         translationManager = null
@@ -448,9 +479,10 @@ class CaptureService : Service() {
             val right  = (raw.width  * captureRightFraction).toInt()
             val bitmap = cropBitmap(raw, top, bottom, left, right)
 
+            val ocrBitmap = blackoutFloatingIcon(bitmap, left, top)
             onStatusUpdate?.invoke(getString(R.string.status_ocr))
-            val ocrResult = ocrManager.recognise(bitmap, sourceLang)
-            bitmap.recycle()
+            val ocrResult = ocrManager.recognise(ocrBitmap, sourceLang)
+            ocrBitmap.recycle()
 
             if (ocrResult == null) {
                 onStatusUpdate?.invoke(noTextMessage())

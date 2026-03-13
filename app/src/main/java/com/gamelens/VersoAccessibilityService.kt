@@ -300,8 +300,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
@@ -403,8 +402,15 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         floatingMenuWm = null
     }
 
-    fun updateFloatingIconLiveMode(live: Boolean) {
-        // No-op now — FLAG_SECURE handles screenshot exclusion
+    /**
+     * Returns the floating icon's bounding rect in screen coordinates, or null
+     * if the icon is not showing. Used by CaptureService to black out the icon
+     * area before OCR so it doesn't interfere with text recognition.
+     */
+    fun getFloatingIconRect(): android.graphics.Rect? {
+        val icon = floatingIcon ?: return null
+        val p = icon.params ?: return null
+        return android.graphics.Rect(p.x, p.y, p.x + icon.viewSizePx, p.y + icon.viewSizePx)
     }
 
     private fun sendMainActivityIntent(action: String) {
