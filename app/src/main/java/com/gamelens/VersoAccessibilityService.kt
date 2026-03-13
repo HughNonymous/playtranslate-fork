@@ -300,7 +300,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
@@ -314,6 +315,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             prefs.overlayIconFraction = fraction
         }
         icon.onTap = {
+            if (MainActivity.isLiveModeActive) {
+                sendMainActivityIntent(MainActivity.ACTION_STOP_LIVE)
+            }
             showFloatingMenu(display, icon)
         }
 
@@ -365,6 +369,10 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             hideFloatingIcon()
         }
         menu.onDismiss = { dismissFloatingMenu() }
+        menu.onStartLive = {
+            dismissFloatingMenu()
+            sendMainActivityIntent(MainActivity.ACTION_START_LIVE)
+        }
         menu.onRegionSelected = { top, bottom, left, right ->
             dismissFloatingMenu()
             handleRegionSelection(display.displayId, top, bottom, left, right)
@@ -393,6 +401,18 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         try { floatingMenu?.let { floatingMenuWm?.removeView(it) } } catch (_: Exception) {}
         floatingMenu = null
         floatingMenuWm = null
+    }
+
+    fun updateFloatingIconLiveMode(live: Boolean) {
+        // No-op now — FLAG_SECURE handles screenshot exclusion
+    }
+
+    private fun sendMainActivityIntent(action: String) {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            this.action = action
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        startActivity(intent)
     }
 
     /**
@@ -457,9 +477,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Hide the debug overlay so it doesn't appear in the screenshot.
-        // The floating icon is NOT hidden — toggling its visibility mid-drag
-        // breaks touch event delivery and makes it undraggable.
+        // Hide debug overlay so it doesn't appear in the screenshot.
+        // The floating icon uses FLAG_SECURE so the compositor excludes it automatically.
         val hadDebugOverlay = debugOverlayView != null
         if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.INVISIBLE
 

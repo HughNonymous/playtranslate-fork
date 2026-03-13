@@ -89,7 +89,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     private var savedParamX = 0
     private var savedParamY = 0
     /** True while in drag mode (ring appearance). */
-    private var inDragMode = false
+    var inDragMode = false
+        private set
     /** Whether onDragStart has already been called for this gesture. */
     private var dragStartFired = false
     /** Current snapped edge — used to position icon on the visible half. */

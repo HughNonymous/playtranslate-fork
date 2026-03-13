@@ -248,6 +248,8 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         when (intent?.action) {
             ACTION_DRAG_SENTENCE -> handleDragSentence(intent)
             ACTION_REGION_CAPTURE -> handleRegionCapture(intent)
+            ACTION_START_LIVE -> if (!isLiveMode) withAccessibility { startLiveMode() }
+            ACTION_STOP_LIVE -> if (isLiveMode) stopLiveMode()
         }
     }
 
@@ -379,6 +381,7 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
 
     private fun startLiveMode() {
         isLiveMode = true
+        isLiveModeActive = true
         btnLivePlay.visibility = View.GONE
         btnLivePause.visibility = View.VISIBLE
         btnClear.visibility = View.GONE
@@ -390,6 +393,7 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
 
     private fun stopLiveMode() {
         isLiveMode = false
+        isLiveModeActive = false
         btnLivePause.visibility = View.GONE
         btnLivePlay.visibility = View.VISIBLE
         liveProgressRing.visibility = View.GONE
@@ -1046,8 +1050,13 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         const val EXTRA_LEFT_FRAC = "extra_left_frac"
         const val EXTRA_RIGHT_FRAC = "extra_right_frac"
         const val DRAGGED_REGION_LABEL = "Drawn Region"
+        const val ACTION_START_LIVE = "com.gamelens.ACTION_START_LIVE"
+        const val ACTION_STOP_LIVE = "com.gamelens.ACTION_STOP_LIVE"
 
         @Volatile
         var isInForeground = false
+
+        @Volatile
+        var isLiveModeActive = false
     }
 }

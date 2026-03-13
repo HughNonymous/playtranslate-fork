@@ -73,10 +73,13 @@ class DragLookupController(
         private const val HOLD_STILL_MS = 200L
         /** Wobble radius — finger movement within this distance doesn't reset the timer. */
         private const val WOBBLE_RADIUS_DP = 8f
-        /** Horizontal expansion around finger for line hit-testing. */
-        private const val HIT_EXPAND_X_PX = 80
-        /** Vertical expansion — kept small to avoid grabbing adjacent lines. */
-        private const val HIT_EXPAND_Y_PX = 30
+        /** Horizontal expansion around finger for line hit-testing (3 tiers). */
+        private const val HIT_EXPAND_X_PX_1 = 80
+        private const val HIT_EXPAND_Y_PX_1 = 30
+        private const val HIT_EXPAND_X_PX_2 = 160
+        private const val HIT_EXPAND_Y_PX_2 = 60
+        private const val HIT_EXPAND_X_PX_3 = 300
+        private const val HIT_EXPAND_Y_PX_3 = 100
 
         /** Sentence-ending punctuation for extracting sentences from group text. */
         private val SENTENCE_END_PUNCTUATION = setOf(
@@ -327,28 +330,37 @@ class DragLookupController(
     }
 
     private fun findLineAt(x: Int, y: Int, lines: List<OcrManager.OcrLine>): OcrManager.OcrLine? {
-        var bestLine: OcrManager.OcrLine? = null
-        var bestDist = Long.MAX_VALUE
-        for (line in lines) {
-            val expanded = Rect(line.bounds).apply {
-                top -= HIT_EXPAND_Y_PX
-                bottom += HIT_EXPAND_Y_PX
-                left -= HIT_EXPAND_X_PX
-                right += HIT_EXPAND_X_PX
+        // Try progressively wider search areas
+        val tiers = arrayOf(
+            intArrayOf(HIT_EXPAND_X_PX_1, HIT_EXPAND_Y_PX_1),
+            intArrayOf(HIT_EXPAND_X_PX_2, HIT_EXPAND_Y_PX_2),
+            intArrayOf(HIT_EXPAND_X_PX_3, HIT_EXPAND_Y_PX_3)
+        )
+        for ((expandX, expandY) in tiers) {
+            var bestLine: OcrManager.OcrLine? = null
+            var bestDist = Long.MAX_VALUE
+            for (line in lines) {
+                val expanded = Rect(line.bounds).apply {
+                    top -= expandY
+                    bottom += expandY
+                    left -= expandX
+                    right += expandX
+                }
+                if (!expanded.contains(x, y)) continue
+                val cx = line.bounds.centerX()
+                val cy = line.bounds.centerY()
+                val dx = (x - cx).toLong()
+                val dy = (y - cy).toLong()
+                // Weight vertical distance 3× to strongly prefer the line the finger is actually on
+                val dist = dx * dx + dy * dy * 9
+                if (dist < bestDist) {
+                    bestDist = dist
+                    bestLine = line
+                }
             }
-            if (!expanded.contains(x, y)) continue
-            val cx = line.bounds.centerX()
-            val cy = line.bounds.centerY()
-            val dx = (x - cx).toLong()
-            val dy = (y - cy).toLong()
-            // Weight vertical distance 3× to strongly prefer the line the finger is actually on
-            val dist = dx * dx + dy * dy * 9
-            if (dist < bestDist) {
-                bestDist = dist
-                bestLine = line
-            }
+            if (bestLine != null) return bestLine
         }
-        return bestLine
+        return null
     }
 
     /**

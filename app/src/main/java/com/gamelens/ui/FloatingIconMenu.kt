@@ -37,6 +37,7 @@ class FloatingIconMenu(context: Context) : FrameLayout(context) {
     var onHideIcon: (() -> Unit)? = null
     var onDismiss: (() -> Unit)? = null
     var onRegionSelected: ((top: Float, bottom: Float, left: Float, right: Float) -> Unit)? = null
+    var onStartLive: (() -> Unit)? = null
     var isSingleScreen: Boolean = false
 
     private val dimPaint = Paint().apply {
@@ -76,6 +77,31 @@ class FloatingIconMenu(context: Context) : FrameLayout(context) {
             visibility = View.INVISIBLE
         }
 
+        // Play button (start live mode)
+        val playBtn = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#40A040"))
+                cornerRadius = 12 * dp
+            }
+            elevation = 8 * dp
+            layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
+                bottomMargin = (8 * dp).toInt()
+            }
+            setOnClickListener { onStartLive?.invoke() }
+        }
+        val playIcon = TextView(context).apply {
+            text = "\u25B6"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.CENTER
+        }
+        playBtn.addView(playIcon, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        menuCard.addView(playBtn)
+
+        // Hide button (X)
         val hideBtn = FrameLayout(context).apply {
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E04040"))
