@@ -264,6 +264,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         cropLeft: Int, cropTop: Int,
         screenshotW: Int, screenshotH: Int
     ) {
+        // Don't show while user is actively interacting
+        if (joystickHeld) return
+
         // Reuse existing view if on the same display; otherwise recreate
         if (translationOverlayView != null && translationOverlayDisplayId == display.displayId) {
             translationOverlayView?.setBoxes(boxes, cropLeft, cropTop, screenshotW, screenshotH)
@@ -309,6 +312,18 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
 
     private var onGameInput: (() -> Unit)? = null
     private var lastKeyEventTime = 0L
+    private var buttonHeld = false
+    private var touchActive = false
+    private val TOUCH_HOLD_TIMEOUT_MS = 2000L
+    private val touchTimeoutRunnable = Runnable { touchActive = false }
+
+    /**
+     * True while any input source is actively being used (button held,
+     * touch down, or joystick held). CaptureService checks this to avoid
+     * showing the overlay during active interaction.
+     */
+    val isInputActive: Boolean
+        get() = buttonHeld || touchActive || joystickHeld
 
     /**
      * Start monitoring gamepad buttons, screen touches, and joystick on [displayId].
@@ -317,6 +332,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     fun startInputMonitoring(displayId: Int, callback: () -> Unit) {
         onGameInput = callback
         lastKeyEventTime = 0L
+        buttonHeld = false
+        touchActive = false
         addTouchSentinel(displayId)
         addJoystickSentinel(displayId)
         startJoystickPolling()
@@ -324,6 +341,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
 
     fun stopInputMonitoring() {
         onGameInput = null
+        buttonHeld = false
+        touchActive = false
+        debugHandler.removeCallbacks(touchTimeoutRunnable)
         stopJoystickPolling()
         removeJoystickSentinel()
         removeTouchSentinel()
@@ -346,6 +366,11 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         val view = View(ctx).apply {
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                    // Mark touch as active. We can't detect touch-up from
+                    // the sentinel, so use a timeout to assume lift.
+                    touchActive = true
+                    debugHandler.removeCallbacks(touchTimeoutRunnable)
+                    debugHandler.postDelayed(touchTimeoutRunnable, TOUCH_HOLD_TIMEOUT_MS)
                     onGameInput?.invoke()
                 }
                 false
@@ -384,7 +409,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var joystickSentinelParams: WindowManager.LayoutParams? = null
 
     private val JOYSTICK_POLL_INTERVAL_MS = 500L
-    private val JOYSTICK_SAMPLE_WINDOW_MS = 80L
+    private val JOYSTICK_SAMPLE_WINDOW_MS = 60L
     private val JOYSTICK_QUIET_THRESHOLD_MS = 500L
 
     private var joystickDetected = false
@@ -414,7 +439,10 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                     val ay = event.getAxisValue(MotionEvent.AXIS_Y)
                     val az = event.getAxisValue(MotionEvent.AXIS_Z)
                     val rz = event.getAxisValue(MotionEvent.AXIS_RZ)
-                    if (ax * ax + ay * ay > 0.25f || az * az + rz * rz > 0.25f) {
+                    val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+                    val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+                    if (ax * ax + ay * ay > 0.25f || az * az + rz * rz > 0.25f
+                        || hatX * hatX + hatY * hatY > 0.25f) {
                         joystickDetected = true
                     }
                 }
@@ -446,9 +474,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         override fun run() {
             if (!joystickPolling || joystickSentinelView == null || onGameInput == null) return
 
-            // Only sample during quiet periods — no key events recently
-            val quiet = System.currentTimeMillis() - lastKeyEventTime > JOYSTICK_QUIET_THRESHOLD_MS
-            if (!quiet) {
+            // Only sample during quiet periods — no buttons or touches active
+            val keyQuiet = System.currentTimeMillis() - lastKeyEventTime > JOYSTICK_QUIET_THRESHOLD_MS
+            if (!keyQuiet || buttonHeld || touchActive) {
                 debugHandler.postDelayed(this, JOYSTICK_POLL_INTERVAL_MS)
                 return
             }
@@ -511,17 +539,25 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            val src = event.source
-            val isGameInput = src and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
-                || src and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
-                || KeyEvent.isGamepadButton(event.keyCode)
-            if (isGameInput) {
-                lastKeyEventTime = System.currentTimeMillis()
-                if (dragLookupController?.isPopupShowing == true) {
-                    dragLookupController?.dismiss()
+        val src = event.source
+        val isGameInput = src and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
+            || src and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+            || KeyEvent.isGamepadButton(event.keyCode)
+        if (isGameInput) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    lastKeyEventTime = System.currentTimeMillis()
+                    buttonHeld = true
+                    if (dragLookupController?.isPopupShowing == true) {
+                        dragLookupController?.dismiss()
+                    }
+                    onGameInput?.invoke()
                 }
-                onGameInput?.invoke()
+                KeyEvent.ACTION_UP -> {
+                    buttonHeld = false
+                    lastKeyEventTime = System.currentTimeMillis()
+                    onGameInput?.invoke()
+                }
             }
         }
         return false // pass through to the game

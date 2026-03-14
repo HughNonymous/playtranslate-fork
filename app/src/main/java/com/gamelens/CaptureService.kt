@@ -321,8 +321,8 @@ class CaptureService : Service() {
     }
 
     /**
-     * Called (on the main thread) every time a gamepad / d-pad button is
-     * pressed while live mode is active.
+     * Called (on the main thread) every time user input is detected
+     * (button press/release, touch, joystick) while live mode is active.
      */
     private fun onUserInteraction() {
         if (!liveActive) return
@@ -334,7 +334,12 @@ class CaptureService : Service() {
         // (Re)start the settle timer — capture fires once input stops
         interactionDebounceJob?.cancel()
         interactionDebounceJob = serviceScope.launch {
-            delay(Prefs(this@CaptureService).captureIntervalSec * 1000L)
+            val settleMs = Prefs(this@CaptureService).captureIntervalSec * 1000L
+            delay(settleMs)
+            // Wait until all input sources have released before capturing
+            while (PlayTranslateAccessibilityService.instance?.isInputActive == true) {
+                delay(settleMs)
+            }
             runLiveCaptureCycle()
         }
     }
