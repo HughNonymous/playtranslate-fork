@@ -250,7 +250,7 @@ class TranslationResultFragment : Fragment() {
                     .show()
             else ->
                 AnkiReviewBottomSheet.newInstance(
-                    result.originalText, result.translatedText, mainWordResults, result.screenshotPath
+                    getDisplayedOriginalText(), result.translatedText, mainWordResults, result.screenshotPath
                 ).show(childFragmentManager, AnkiReviewBottomSheet.TAG)
         }
     }
