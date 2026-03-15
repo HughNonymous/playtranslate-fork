@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -35,10 +36,13 @@ class TranslationOverlayView(context: Context) : View(context) {
 
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
+        typeface = Typeface.DEFAULT_BOLD
     }
 
     private val minTextSizePx = 8f * dp
-    private val boxPadding = 4f * dp
+    private val boxPadding = 6f * dp
+    /** Small inset so text doesn't touch the edges of the background. */
+    private val textMargin = 3f * dp
 
     private var boxes: List<TextBox> = emptyList()
     private var cropOffsetX = 0
@@ -97,7 +101,7 @@ class TranslationOverlayView(context: Context) : View(context) {
 
             // Draw text centered in box
             canvas.save()
-            val textX = screenRect.left + boxPadding
+            val textX = screenRect.left + textMargin
             val textY = screenRect.top + (screenRect.height() - layout.height) / 2f
             canvas.translate(textX, textY)
             layout.draw(canvas)
@@ -106,10 +110,46 @@ class TranslationOverlayView(context: Context) : View(context) {
     }
 
     private fun buildLayouts(): List<Pair<RectF, StaticLayout>> {
-        return boxes.map { box ->
-            val screenRect = mapRect(box.bounds)
-            val availW = (screenRect.width() - 2 * boxPadding).toInt().coerceAtLeast(1)
-            val availH = screenRect.height() - 2 * boxPadding
+        val displayW = width.toFloat()
+        val displayH = height.toFloat()
+
+        // Map OCR bounds to screen coordinates, expanded by boxPadding
+        // so the background extends beyond the tight OCR region.
+        val screenRects = boxes.map { box ->
+            val r = mapRect(box.bounds)
+            RectF(
+                (r.left - boxPadding).coerceAtLeast(0f),
+                (r.top - boxPadding).coerceAtLeast(0f),
+                (r.right + boxPadding).coerceAtMost(displayW),
+                (r.bottom + boxPadding).coerceAtMost(displayH)
+            )
+        }
+
+        // Widen each box horizontally if it won't overlap others
+        val widenedRects = screenRects.mapIndexed { i, rect ->
+            val desiredExpand = rect.width() * 0.3f
+            var newLeft = (rect.left - desiredExpand / 2).coerceAtLeast(0f)
+            var newRight = (rect.right + desiredExpand / 2).coerceAtMost(displayW)
+
+            for (j in screenRects.indices) {
+                if (j == i) continue
+                val other = screenRects[j]
+                if (rect.top < other.bottom && rect.bottom > other.top) {
+                    if (newLeft < other.right && rect.left >= other.right) {
+                        newLeft = other.right
+                    }
+                    if (newRight > other.left && rect.right <= other.left) {
+                        newRight = other.left
+                    }
+                }
+            }
+            RectF(newLeft, rect.top, newRight, rect.bottom)
+        }
+
+        return boxes.zip(widenedRects).map { (box, screenRect) ->
+            // Text fills the full background box minus a small margin
+            val availW = (screenRect.width() - 2 * textMargin).toInt().coerceAtLeast(1)
+            val availH = screenRect.height() - 2 * textMargin
             val layout = fitText(box.translatedText, availW, availH)
             Pair(screenRect, layout)
         }
@@ -117,30 +157,34 @@ class TranslationOverlayView(context: Context) : View(context) {
 
     /**
      * Creates a [StaticLayout] for [text] that fits within [availW] x [availH] pixels.
-     * Starts with a large font size and shrinks until the text fits, capped at [minTextSizePx].
+     * Binary search for the largest font size where the text fits.
      */
     private fun fitText(text: String, availW: Int, availH: Float): StaticLayout {
         var lo = minTextSizePx
         var hi = availH.coerceAtLeast(minTextSizePx)
-        var bestLayout = makeLayout(text, lo, availW)
 
-        // Binary search for the largest font size that fits
+        // Binary search using the shared paint for measurement
         repeat(10) {
             val mid = (lo + hi) / 2f
-            val layout = makeLayout(text, mid, availW)
+            textPaint.textSize = mid
+            val layout = StaticLayout.Builder.obtain(text, 0, text.length, textPaint, availW)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .setMaxLines(100)
+                .build()
             if (layout.height <= availH) {
-                bestLayout = layout
                 lo = mid
             } else {
                 hi = mid
             }
         }
-        return bestLayout
-    }
 
-    private fun makeLayout(text: String, textSize: Float, width: Int): StaticLayout {
-        textPaint.textSize = textSize
-        return StaticLayout.Builder.obtain(text, 0, text.length, textPaint, width)
+        // Create the final layout with its own TextPaint copy so the
+        // text size is frozen — otherwise all layouts share the same
+        // paint and render at whatever size was set last.
+        val frozenPaint = TextPaint(textPaint)
+        frozenPaint.textSize = lo
+        return StaticLayout.Builder.obtain(text, 0, text.length, frozenPaint, availW)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setIncludePad(false)
             .setMaxLines(100)
