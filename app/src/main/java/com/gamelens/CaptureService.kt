@@ -375,6 +375,32 @@ class CaptureService : Service() {
         PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
     }
 
+    /** Trigger a fresh capture cycle in live mode (e.g. after hold-release). */
+    fun refreshLiveOverlay() {
+        if (!liveActive) return
+        // Clear cached data so the dedup check doesn't short-circuit
+        // and re-show stale overlays.
+        lastLiveOcrText = null
+        cachedOverlayBoxes = null
+        ++captureGeneration
+        interactionDebounceJob?.cancel()
+        interactionDebounceJob = serviceScope.launch { runLiveCaptureCycle() }
+    }
+
+    /** One-shot: capture, OCR, translate, show overlay (not live mode). */
+    fun showOneShotOverlay() {
+        ++captureGeneration
+        serviceScope.launch { runLiveCaptureCycle() }
+    }
+
+    /** True while the user is holding the floating icon — suppresses overlay display. */
+    var holdActive = false
+
+    /** Cancel any in-flight one-shot and invalidate its results. */
+    fun cancelOneShot() {
+        ++captureGeneration
+    }
+
     // ── Scene-change detection (API < 34) ────────────────────────────────
     //
     // On API < 34, we can't use MediaProjection to capture without overlays,
@@ -545,6 +571,7 @@ class CaptureService : Service() {
         cropLeft: Int, cropTop: Int,
         screenshotW: Int, screenshotH: Int
     ) {
+        if (holdActive) return // suppress while user is holding the icon
         val a11y = PlayTranslateAccessibilityService.instance ?: return
         val dm = getSystemService(DisplayManager::class.java)
         val display = dm.getDisplay(gameDisplayId) ?: return

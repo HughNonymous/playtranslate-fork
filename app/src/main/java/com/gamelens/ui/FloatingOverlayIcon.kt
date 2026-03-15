@@ -70,6 +70,10 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     var onDragMove: ((Float, Float) -> Unit)? = null
     /** Called on ACTION_UP after a drag. Return true if popup is active (icon returns to saved pos). */
     var onDragEnd: (() -> Boolean)? = null
+    /** Called when the user holds the icon without moving (long press). */
+    var onHoldStart: (() -> Unit)? = null
+    /** Called when the user lifts after a hold (without having dragged). */
+    var onHoldEnd: (() -> Unit)? = null
 
     var wm: WindowManager? = null
     var params: WindowManager.LayoutParams? = null
@@ -93,6 +97,15 @@ class FloatingOverlayIcon(context: Context) : View(context) {
         private set
     /** Whether onDragStart has already been called for this gesture. */
     private var dragStartFired = false
+    /** Whether onHoldStart has fired for this gesture. */
+    private var holdFired = false
+    private val holdDelayMs = 400L
+    private val holdRunnable = Runnable {
+        if (!dragStartFired && totalMovement < tapThresholdPx) {
+            holdFired = true
+            onHoldStart?.invoke()
+        }
+    }
     /** Current snapped edge — used to position icon on the visible half. */
     var currentEdge = Edge.RIGHT
         private set
@@ -191,6 +204,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
                 lastXVel = 0f
                 lastYVel = 0f
                 dragStartFired = false
+                holdFired = false
+                postDelayed(holdRunnable, holdDelayMs)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -207,7 +222,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
                 p.y = (downParamY + dy).toInt()
                 try { wm?.updateViewLayout(this, p) } catch (_: Exception) {}
 
-                if (totalMovement >= tapThresholdPx) {
+                if (totalMovement >= tapThresholdPx && !holdFired) {
+                    removeCallbacks(holdRunnable) // cancel hold — this is a drag
                     if (!dragStartFired) {
                         // Center the icon on the finger (user may have grabbed off-center)
                         val rawX = event.rawX
@@ -240,8 +256,19 @@ class FloatingOverlayIcon(context: Context) : View(context) {
                 velocityTracker = null
 
                 exitDragMode()
+                removeCallbacks(holdRunnable)
 
-                if (totalMovement < tapThresholdPx) {
+                if (holdFired) {
+                    // Was holding — fire hold end, restore position, don't treat as tap
+                    holdFired = false
+                    val p = params
+                    if (p != null) {
+                        p.x = savedParamX
+                        p.y = savedParamY
+                        try { wm?.updateViewLayout(this, p) } catch (_: Exception) {}
+                    }
+                    onHoldEnd?.invoke()
+                } else if (totalMovement < tapThresholdPx) {
                     onTap?.invoke()
                 } else if (onDragEnd?.invoke() == true) {
                     restorePosition()
@@ -253,6 +280,8 @@ class FloatingOverlayIcon(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 velocityTracker?.recycle()
                 velocityTracker = null
+                removeCallbacks(holdRunnable)
+                if (holdFired) { holdFired = false; onHoldEnd?.invoke() }
                 exitDragMode()
                 snapToEdge(0f, 0f)
                 return true

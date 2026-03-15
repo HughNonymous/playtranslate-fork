@@ -61,7 +61,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var floatingIcon: FloatingOverlayIcon? = null
     private var floatingIconWm: WindowManager? = null
     private var floatingIconDisplayId: Int = -1
-    private var dragLookupController: DragLookupController? = null
+    var dragLookupController: DragLookupController? = null
+        private set
     private var floatingMenu: FloatingIconMenu? = null
     private var floatingMenuWm: WindowManager? = null
     private var debugOverlayView: OcrDebugOverlayView? = null
@@ -484,10 +485,60 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
             screenH = screenSize.y,
             popup = popup
         )
-        popup.onDismiss = { controller.onPopupDismissed() }
-        icon.onDragStart = { controller.onDragStart() }
+        // Track whether live mode was running when the popup appeared
+        var liveWasPausedForPopup = false
+
+        popup.onDismiss = {
+            controller.onPopupDismissed()
+            // Resume live mode if it was paused for this popup
+            if (liveWasPausedForPopup) {
+                liveWasPausedForPopup = false
+                val effectivelySingleScreen = Prefs.isSingleScreen(this) || !MainActivity.isInForeground
+                if (effectivelySingleScreen) {
+                    toggleLiveDirect(true)
+                } else {
+                    sendMainActivityIntent(MainActivity.ACTION_START_LIVE)
+                }
+            }
+        }
+        icon.onDragStart = {
+            // Pause live mode while showing definition popup
+            if (MainActivity.isLiveModeActive) {
+                liveWasPausedForPopup = true
+                val effectivelySingleScreen = Prefs.isSingleScreen(this) || !MainActivity.isInForeground
+                if (effectivelySingleScreen) {
+                    toggleLiveDirect(false)
+                } else {
+                    sendMainActivityIntent(MainActivity.ACTION_STOP_LIVE)
+                }
+            }
+            controller.onDragStart()
+        }
         icon.onDragMove = { rawX, rawY -> controller.onDragMove(rawX, rawY) }
         icon.onDragEnd = { controller.onDragEnd() }
+        icon.onHoldStart = {
+            val svc = CaptureService.instance
+            if (MainActivity.isLiveModeActive) {
+                // Live mode: temporarily hide overlays, suppress new ones
+                svc?.holdActive = true
+                hideTranslationOverlay()
+            } else {
+                // Not live: one-shot capture + translate + show overlay
+                svc?.showOneShotOverlay()
+            }
+        }
+        icon.onHoldEnd = {
+            val svc = CaptureService.instance
+            if (MainActivity.isLiveModeActive) {
+                // Live mode: allow overlays again, refresh
+                svc?.holdActive = false
+                svc?.refreshLiveOverlay()
+            } else {
+                // Not live: remove overlays and invalidate any in-flight one-shot
+                svc?.cancelOneShot()
+                hideTranslationOverlay()
+            }
+        }
         dragLookupController = controller
 
         try {
@@ -604,6 +655,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                 return
             }
             MainActivity.isLiveModeActive = true
+            // Dismiss any definition popup when entering live mode.
+            val hadPopup = dragLookupController?.isPopupShowing == true
+            dragLookupController?.dismiss()
             if (!svc.isConfigured) {
                 val prefs = Prefs(this)
                 val entry = prefs.getRegionList().getOrElse(prefs.captureRegionIndex) {
@@ -620,7 +674,13 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                     regionLabel           = entry.label
                 )
             }
-            svc.startLive()
+            // Delay start if a popup was just dismissed so the compositor
+            // has time to remove it before the first screenshot.
+            if (hadPopup) {
+                debugHandler.postDelayed({ svc.startLive() }, 100)
+            } else {
+                svc.startLive()
+            }
         } else {
             MainActivity.isLiveModeActive = false
             svc.stopLive()

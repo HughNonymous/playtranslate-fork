@@ -397,6 +397,9 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
     private fun startLiveMode() {
         isLiveMode = true
         isLiveModeActive = true
+        // Dismiss any definition popup when entering live mode
+        val hadPopup = PlayTranslateAccessibilityService.instance?.dragLookupController?.isPopupShowing == true
+        PlayTranslateAccessibilityService.instance?.dragLookupController?.dismiss()
         btnLivePlay.visibility = View.GONE
         btnLivePause.visibility = View.VISIBLE
         btnClear.visibility = View.GONE
@@ -404,7 +407,13 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         updateRegionButton()
         resultFragment?.showStatus(searchingStatusText())
         ensureConfigured()
-        captureService?.startLive()
+        // Delay start if a popup was just dismissed so the compositor
+        // has time to remove it before the first screenshot.
+        if (hadPopup) {
+            window.decorView.postDelayed({ captureService?.startLive() }, 100)
+        } else {
+            captureService?.startLive()
+        }
     }
 
     private fun stopLiveMode() {
