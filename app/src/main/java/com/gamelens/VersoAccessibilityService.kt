@@ -273,6 +273,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         cropLeft: Int, cropTop: Int,
         screenshotW: Int, screenshotH: Int
     ) {
+        // Overlay is appearing — dismiss loading spinner
+        floatingIcon?.showLoading = false
+
         // Reuse existing view if on the same display; otherwise recreate
         if (translationOverlayView != null && translationOverlayDisplayId == display.displayId) {
             translationOverlayView?.setBoxes(boxes, cropLeft, cropTop, screenshotW, screenshotH)
@@ -524,11 +527,13 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                 hideTranslationOverlay()
             } else {
                 // Not live: one-shot capture + translate + show overlay
+                icon.showLoading = true
                 svc?.showOneShotOverlay()
             }
         }
         icon.onHoldEnd = {
             val svc = CaptureService.instance
+            icon.showLoading = false
             if (MainActivity.isLiveModeActive) {
                 // Live mode: allow overlays again, refresh
                 svc?.holdActive = false

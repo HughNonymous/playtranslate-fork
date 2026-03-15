@@ -49,6 +49,70 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val iconBitmap: Bitmap = BitmapFactory.decodeResource(resources, R.drawable.ic_floating_icon)
 
+    // ── Loading spinner (separate overlay window) ──────────────────────
+    private var spinnerView: View? = null
+    private var spinnerWm: WindowManager? = null
+    var showLoading = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (value) showSpinnerWindow() else hideSpinnerWindow()
+        }
+
+    private fun showSpinnerWindow() {
+        hideSpinnerWindow()
+        val wm = this.wm ?: return
+        val p = params ?: return
+        val spinSize = (28 * resources.displayMetrics.density).toInt()
+        val padding = (6 * resources.displayMetrics.density).toInt()
+        val totalSize = spinSize + padding * 2
+        val gap = (32 * resources.displayMetrics.density).toInt()
+
+        val spinner = android.widget.FrameLayout(context).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.argb(180, 0, 0, 0))
+            }
+            val bar = android.widget.ProgressBar(context).apply {
+                isIndeterminate = true
+                indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            }
+            addView(bar, android.widget.FrameLayout.LayoutParams(spinSize, spinSize).apply {
+                gravity = android.view.Gravity.CENTER
+            })
+        }
+
+        // Position to the visible side of the icon
+        val spinX = if (currentEdge == Edge.LEFT) {
+            p.x + viewSizePx + gap
+        } else {
+            p.x - totalSize - gap
+        }
+        val spinY = p.y + (viewSizePx - totalSize) / 2
+
+        val lp = WindowManager.LayoutParams(
+            totalSize, totalSize,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            android.graphics.PixelFormat.TRANSLUCENT
+        ).apply {
+            x = spinX
+            y = spinY
+            gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+        }
+
+        try { wm.addView(spinner, lp) } catch (_: Exception) { return }
+        spinnerView = spinner
+        spinnerWm = wm
+    }
+
+    private fun hideSpinnerWindow() {
+        try { spinnerView?.let { spinnerWm?.removeView(it) } } catch (_: Exception) {}
+        spinnerView = null
+        spinnerWm = null
+    }
+
     // ── Drag mode paints (ring + magnifying glass) ──────────────────────
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#CCFFFFFF")
@@ -154,6 +218,7 @@ class FloatingOverlayIcon(context: Context) : View(context) {
             val dst = RectF(cx - drawW / 2f, center - drawH / 2f, cx + drawW / 2f, center + drawH / 2f)
             canvas.drawBitmap(iconBitmap, null, dst, bitmapPaint)
         }
+
     }
 
     private fun drawMagnifyingGlass(canvas: Canvas, cx: Float, cy: Float, size: Float) {
