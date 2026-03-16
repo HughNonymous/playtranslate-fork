@@ -759,6 +759,14 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
 
         showRegionDragOverlay(display) { _, _, _, _ -> /* live updates not needed */ }
         dragView?.setRegion(initTop, initBottom, initLeft, initRight)
+        dragView?.onDragStart = {
+            regionEditorBar?.visibility = View.INVISIBLE
+            regionEditorLabel?.visibility = View.INVISIBLE
+        }
+        dragView?.onDragEnd = {
+            regionEditorBar?.visibility = View.VISIBLE
+            regionEditorLabel?.visibility = View.VISIBLE
+        }
 
         // Build floating Use / Cancel button bar
         val ctx = createDisplayContext(display)

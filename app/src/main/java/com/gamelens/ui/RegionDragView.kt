@@ -24,6 +24,10 @@ class RegionDragView(context: Context) : View(context) {
 
     /** Called on every drag move with (top, bottom, left, right). */
     var onRegionChanged: ((Float, Float, Float, Float) -> Unit)? = null
+    /** Called when the user starts dragging an edge/corner/center. */
+    var onDragStart: (() -> Unit)? = null
+    /** Called when the user lifts their finger after dragging. */
+    var onDragEnd: (() -> Unit)? = null
 
     private val density get() = resources.displayMetrics.density
 
@@ -151,6 +155,7 @@ class RegionDragView(context: Context) : View(context) {
                     else -> DragTarget.NONE
                 }
                 lastX = x; lastY = y
+                if (dragging != DragTarget.NONE) onDragStart?.invoke()
                 return dragging != DragTarget.NONE
             }
 
@@ -195,6 +200,7 @@ class RegionDragView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (dragging != DragTarget.NONE) onDragEnd?.invoke()
                 dragging = DragTarget.NONE
             }
         }
