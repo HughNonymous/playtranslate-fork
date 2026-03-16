@@ -396,9 +396,15 @@ class CaptureService : Service() {
     /** True while the user is holding the floating icon — suppresses overlay display. */
     var holdActive = false
 
+    /** Path to the last clean screenshot (no overlays). Used by drag-to-lookup to
+     *  avoid a second takeScreenshot call (which can be rate-limited by the OS). */
+    var lastCleanScreenshotPath: String? = null
+        private set
+
     /** Cancel any in-flight one-shot and invalidate its results. */
     fun cancelOneShot() {
         ++captureGeneration
+        stopSceneChangeDetection()
     }
 
     // ── Scene-change detection (API < 34) ────────────────────────────────
@@ -681,8 +687,10 @@ class CaptureService : Service() {
                 Bitmap.createBitmap(raw, left, top, (right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1))
             else raw
 
-            // Small downsampled copy for color sampling — independent memory,
-            // survives ocrBitmap.recycle() which can invalidate raw on some devices.
+            // Save screenshot and create color reference IMMEDIATELY — the bitmap
+            // from captureDisplay can become invalid after any sub-bitmap operations
+            // due to HardwareBuffer lifecycle issues.
+            lastCleanScreenshotPath = saveScreenshotToCache(raw)
             val colorScale = 4
             val colorRef = Bitmap.createScaledBitmap(raw, raw.width / colorScale, raw.height / colorScale, false)
 
@@ -740,11 +748,9 @@ class CaptureService : Service() {
             val gen = ++captureGeneration
             onTranslationStarted?.invoke()
 
-            // Save screenshot only when new content will be shown — this keeps the file
-            // referenced by lastResult alive until the next real change is detected.
             val screenshotW = raw.width
             val screenshotH = raw.height
-            val screenshotPath = saveScreenshotToCache(raw)
+            val screenshotPath = lastCleanScreenshotPath
             raw.recycle()
 
             val liveGroupTexts = ocrResult.groupTexts

@@ -100,24 +100,53 @@ class DragLookupController(
     // ── Public API (called from FloatingOverlayIcon callbacks) ───────────
 
     /**
-     * Called once when the icon transitions to drag mode (ring appearance).
-     * Takes a screenshot and runs full-screen OCR. The screenshot is captured
-     * right after the icon redraws as a transparent ring so the text underneath
-     * is not obscured.
+     * Called once when the icon transitions to drag mode. Takes a screenshot
+     * and runs full-screen OCR. If [existingScreenshotPath] is provided
+     * (e.g. from a hold-to-preview capture), OCR runs on that file instead
+     * of taking a new screenshot — avoids OS rate-limit failures.
      */
-    fun onDragStart() {
+    fun onDragStart(existingScreenshotPath: String? = null) {
         ocrLines = null
         lastSentSentence = null
         ocrJob?.cancel()
         ocrJob = scope.launch {
             try {
-                captureAndOcr()
+                if (existingScreenshotPath != null) {
+                    ocrFromFile(existingScreenshotPath)
+                } else {
+                    captureAndOcr()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "OCR failed", e)
             }
         }
+    }
+
+    private suspend fun ocrFromFile(path: String) {
+        val bitmap = withContext(Dispatchers.IO) {
+            android.graphics.BitmapFactory.decodeFile(path)
+        }
+        if (bitmap == null) {
+            Log.w(TAG, "Could not load screenshot from $path, falling back to capture")
+            captureAndOcr()
+            return
+        }
+        val lines = withContext(Dispatchers.Default) {
+            try {
+                screenshotPath = path
+                ocrManager.recogniseWithPositions(bitmap, "ja")
+            } finally {
+                bitmap.recycle()
+            }
+        }
+        if (lines == null) {
+            Log.d(TAG, "No text found in saved screenshot")
+            return
+        }
+        Log.d(TAG, "OCR from file found ${lines.size} lines")
+        ocrLines = lines
     }
 
     /**

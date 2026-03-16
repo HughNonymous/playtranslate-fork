@@ -490,8 +490,6 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         )
         // Track whether live mode was running when the popup appeared
         var liveWasPausedForPopup = false
-        // True when transitioning from hold to drag (overlays need time to clear)
-        var holdTransition = false
 
         popup.onDismiss = {
             controller.onPopupDismissed()
@@ -518,14 +516,10 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                     sendMainActivityIntent(MainActivity.ACTION_STOP_LIVE)
                 }
             }
-            hideTranslationOverlay()
-            if (holdTransition) {
-                // Overlays were just visible — wait for compositor to clear
-                holdTransition = false
-                debugHandler.postDelayed({ controller.onDragStart() }, 100)
-            } else {
-                controller.onDragStart()
-            }
+            // Reuse the saved screenshot if available (avoids takeScreenshot
+            // rate-limit failures from too many captures in quick succession).
+            val reusePath = CaptureService.instance?.lastCleanScreenshotPath
+            controller.onDragStart(reusePath)
         }
         icon.onDragMove = { rawX, rawY -> controller.onDragMove(rawX, rawY) }
         icon.onDragEnd = {
@@ -544,17 +538,16 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         }
         icon.onHoldCancel = {
             // Hold cancelled because user started dragging — clean up hold
-            // state and transition to drag mode, reusing the existing
-            // screenshot so the drag controller doesn't capture our overlays.
+            // state. Don't hide the overlay here — let captureDisplay find
+            // it and handle the Choreographer timing for a clean capture.
             val svc = CaptureService.instance
             icon.showLoading = false
             if (MainActivity.isLiveModeActive) {
                 svc?.holdActive = false
             } else {
                 svc?.cancelOneShot()
-                hideTranslationOverlay()
             }
-            holdTransition = true
+            hideTranslationOverlay()
         }
         icon.onHoldStart = {
             val svc = CaptureService.instance
