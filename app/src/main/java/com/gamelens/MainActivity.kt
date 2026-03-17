@@ -268,6 +268,7 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         if (onboardingContainer.visibility == View.VISIBLE) return
         if (isSingleScreen()) return
         initLiveHintText()
+        updateRegionButton()
         updateActionButtonState()
         applyLiveModeVisibilitySetting()
     }
