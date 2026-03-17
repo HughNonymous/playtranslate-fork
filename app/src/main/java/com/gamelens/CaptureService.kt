@@ -138,6 +138,10 @@ class CaptureService : Service() {
         this.captureRightFraction  = captureRightFraction
         this.captureRegionLabel    = regionLabel
 
+        // Clear translation cache when settings change — translations may
+        // be in the wrong language or from a different service.
+        translationCache.clear()
+
         val deeplKey = Prefs(this).deeplApiKey
 
         // DeepL — only when a key is configured
@@ -820,16 +824,46 @@ class CaptureService : Service() {
         }
     }
 
+    /** Cache of original text → (translated text, note). Avoids retranslating
+     *  groups that haven't changed between live mode cycles (e.g. persistent
+     *  UI labels while only the dialogue updates). Cleared on language change. */
+    private val translationCache = object : LinkedHashMap<String, Pair<String, String?>>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, String?>>?) =
+            size > 50
+    }
+    /** Set by [translate] when ML Kit fallback is used, so [translateGroupsSeparately]
+     *  knows not to cache the lower-quality result. */
+    private var mlKitFallbackUsed = false
+
     /**
-     * Translates each group in parallel and returns each result separately.
+     * Translates each group in parallel, using cached results for groups
+     * whose original text hasn't changed. Only cache misses hit the network.
      */
     private suspend fun translateGroupsSeparately(groupTexts: List<String>): List<Pair<String, String?>> {
-        if (groupTexts.size <= 1) {
-            return listOf(translate(groupTexts.firstOrNull() ?: ""))
-        }
-        return groupTexts.map { group ->
-            serviceScope.async { translate(group) }
-        }.awaitAll()
+        val uncached = groupTexts.withIndex()
+            .filter { (_, text) -> text !in translationCache }
+
+        // Translate cache misses in parallel
+        val freshTranslations = if (uncached.isNotEmpty()) {
+            mlKitFallbackUsed = false
+            val translations = uncached.map { (_, text) ->
+                serviceScope.async { translate(text) }
+            }.awaitAll()
+
+            // Only cache results from online services (DeepL/Lingva).
+            // ML Kit fallback results are lower quality and should be
+            // retried when the online service recovers.
+            if (!mlKitFallbackUsed) {
+                uncached.zip(translations).forEach { (indexedText, result) ->
+                    translationCache[indexedText.value] = result
+                }
+            }
+
+            // Build a lookup for this batch
+            uncached.map { it.value }.zip(translations).toMap()
+        } else emptyMap()
+
+        return groupTexts.map { translationCache[it] ?: freshTranslations[it]!! }
     }
 
     /**
@@ -876,12 +910,13 @@ class CaptureService : Service() {
             }
         }
 
-        // 3. ML Kit offline fallback
+        // 3. ML Kit offline fallback — don't cache these results since
+        //    the online services may recover on the next attempt.
         val note = if (isNetworkAvailable())
             getString(R.string.note_mlkit_service_unavailable)
         else
             getString(R.string.note_mlkit_no_internet)
-        return Pair(mlKitTranslate(text), note)
+        return Pair(mlKitTranslate(text), note).also { mlKitFallbackUsed = true }
     }
 
     private suspend fun mlKitTranslate(text: String): String {
