@@ -211,12 +211,10 @@ class CaptureService : Service() {
     }
 
     private var captureJob: Job? = null
-    private var captureGeneration = 0
 
     fun captureOnce() {
         captureJob?.cancel()
-        val gen = ++captureGeneration
-        captureJob = serviceScope.launch { runCaptureCycle(gen) }
+        captureJob = serviceScope.launch { runCaptureCycle() }
     }
 
     /**
@@ -226,11 +224,10 @@ class CaptureService : Service() {
      */
     fun processScreenshot(raw: Bitmap) {
         captureJob?.cancel()
-        val gen = ++captureGeneration
-        captureJob = serviceScope.launch { runProcessCycle(gen, raw) }
+        captureJob = serviceScope.launch { runProcessCycle(raw) }
     }
 
-    private suspend fun runProcessCycle(generation: Int, raw: Bitmap) {
+    private suspend fun runProcessCycle(raw: Bitmap) {
         if (!isConfigured) {
             onError?.invoke("Not configured — tap Translate to set up")
             raw.recycle()
@@ -238,7 +235,8 @@ class CaptureService : Service() {
         }
         try {
             onStatusUpdate?.invoke(getString(R.string.status_capturing))
-            val screenshotPath = saveScreenshotToCache(raw)
+            val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager
+            val screenshotPath = mgr?.saveToCache(raw)
 
             val statusBarHeight = getStatusBarHeightForDisplay(gameDisplayId)
             val top    = maxOf((raw.height * captureTopFraction).toInt(), statusBarHeight)
@@ -259,8 +257,6 @@ class CaptureService : Service() {
 
             onStatusUpdate?.invoke(getString(R.string.status_translating))
             val (translated, note) = translateGroups(ocrResult.groupTexts)
-
-            if (generation != captureGeneration) return
 
             val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
             onResult?.invoke(
@@ -286,11 +282,9 @@ class CaptureService : Service() {
     // timer expires (no further input) → capture again.
 
     private var liveActive = false
-    private var liveTranslationJob: Job? = null
     private var interactionDebounceJob: Job? = null
     /** Separate from [interactionDebounceJob] so cancelling the debounce
-     *  doesn't kill an in-flight capture. The capture self-invalidates
-     *  via [captureGeneration] checks instead. */
+     *  doesn't kill an in-flight capture. */
     private var liveCaptureJob: Job? = null
     private var lastLiveOcrText: String? = null
     /** Cached overlay data so dedup-unchanged frames can re-show instantly. */
@@ -311,7 +305,6 @@ class CaptureService : Service() {
         cachedOverlayBoxes = null
         interactionDebounceJob?.cancel()
         liveCaptureJob?.cancel()
-        liveTranslationJob?.cancel()
 
         // Buttons and touch are detected via onKeyEvent and touch sentinel.
         PlayTranslateAccessibilityService.instance
@@ -328,8 +321,6 @@ class CaptureService : Service() {
         interactionDebounceJob = null
         liveCaptureJob?.cancel()
         liveCaptureJob = null
-        liveTranslationJob?.cancel()
-        liveTranslationJob = null
         stopSceneChangeDetection()
         lastLiveOcrText = null
         cachedOverlayBoxes = null
@@ -344,9 +335,7 @@ class CaptureService : Service() {
         // without interference from stale scene detection or translation.
         lastLiveOcrText = null
         cachedOverlayBoxes = null
-        ++captureGeneration
         stopSceneChangeDetection()
-        liveTranslationJob?.cancel()
         interactionDebounceJob?.cancel()
         liveCaptureJob?.cancel()
         liveCaptureJob = serviceScope.launch { runLiveCaptureCycle() }
@@ -354,21 +343,20 @@ class CaptureService : Service() {
 
     /** One-shot: capture, OCR, translate, show overlay (not live mode). */
     fun showOneShotOverlay() {
-        ++captureGeneration
-        serviceScope.launch { runLiveCaptureCycle() }
+        liveCaptureJob?.cancel()
+        liveCaptureJob = serviceScope.launch { runLiveCaptureCycle() }
     }
 
     /** True while the user is holding the floating icon — suppresses overlay display. */
     var holdActive = false
 
-    /** Path to the last clean screenshot (no overlays). Used by drag-to-lookup to
-     *  avoid a second takeScreenshot call (which can be rate-limited by the OS). */
-    var lastCleanScreenshotPath: String? = null
-        private set
+    /** Path to the last clean screenshot. Delegates to [ScreenshotManager]. */
+    val lastCleanScreenshotPath: String?
+        get() = PlayTranslateAccessibilityService.instance?.screenshotManager?.lastCleanPath
 
     /** Cancel any in-flight one-shot and invalidate its results. */
     fun cancelOneShot() {
-        ++captureGeneration
+        liveCaptureJob?.cancel()
         stopSceneChangeDetection()
     }
 
@@ -410,16 +398,14 @@ class CaptureService : Service() {
      */
     private fun startSceneChangeDetection(overlayBoxes: List<android.graphics.Rect>) {
         stopSceneChangeDetection()
+        val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager ?: return
 
         sceneCheckJob = serviceScope.launch {
             // Initial delay to let the overlay render before taking reference
             delay(SCENE_CHECK_INTERVAL_MS)
-            val a11y = PlayTranslateAccessibilityService.instance ?: return@launch
 
             // Take reference frame (with overlays visible)
-            val refBitmap = suspendCancellableCoroutine<Bitmap?> { cont ->
-                a11y.captureDisplayRaw(gameDisplayId) { cont.resume(it) }
-            } ?: return@launch
+            val refBitmap = mgr.requestRaw(gameDisplayId) ?: return@launch
 
             // Build sample positions, skipping overlay regions
             val positions = mutableListOf<Pair<Int, Int>>()
@@ -444,10 +430,7 @@ class CaptureService : Service() {
             while (liveActive) {
                 delay(SCENE_CHECK_INTERVAL_MS)
 
-                val bitmap = suspendCancellableCoroutine<Bitmap?> { cont ->
-                    a11y.captureDisplayRaw(gameDisplayId) { cont.resume(it) }
-                }
-                if (bitmap == null) continue
+                val bitmap = mgr.requestRaw(gameDisplayId) ?: continue
 
                 val currentPixels = IntArray(positions.size) { i ->
                     val (x, y) = positions[i]
@@ -460,9 +443,8 @@ class CaptureService : Service() {
                     val pct = pixelDiffPercent(refPixels, currentPixels)
                     if (pct >= SCENE_CHANGE_THRESHOLD) {
                         sceneMoving = true
-                        ++captureGeneration // invalidate in-flight work
+                        liveCaptureJob?.cancel()
                         PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
-                        liveTranslationJob?.cancel()
                     }
                 } else {
                     // Phase 2: compare consecutive frames to detect stabilization
@@ -516,12 +498,10 @@ class CaptureService : Service() {
     private fun onUserInteraction() {
         if (!liveActive) return
 
-        ++captureGeneration
-
-        // Hide overlay so the next captureDisplay screenshot doesn't
-        // include our translations.
+        // Cancel any in-flight capture/translation and hide the overlay
+        // so the next screenshot is clean.
+        liveCaptureJob?.cancel()
         PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
-        liveTranslationJob?.cancel()
         stopSceneChangeDetection()
 
         // Debounce until input stops, then launch capture in its own job
@@ -561,19 +541,12 @@ class CaptureService : Service() {
     }
 
     /**
-     * Captures the given display using AccessibilityService.takeScreenshot
-     * (hides overlays briefly via Choreographer to get a clean frame),
-     * falling back to MediaProjection if the AccessibilityService isn't available.
+     * Captures a clean screenshot via [ScreenshotManager], falling back to
+     * MediaProjection if the AccessibilityService isn't available.
      */
     private suspend fun captureScreen(displayId: Int): Bitmap? {
-        val a11y = PlayTranslateAccessibilityService.instance
-        return if (a11y != null) {
-            suspendCancellableCoroutine { cont ->
-                a11y.captureDisplay(displayId) { bmp -> cont.resume(bmp) }
-            }
-        } else {
-            captureScreenViaMediaProjection(displayId)
-        }
+        val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager
+        return mgr?.requestClean(displayId) ?: captureScreenViaMediaProjection(displayId)
     }
 
     private suspend fun captureScreenViaMediaProjection(displayId: Int): Bitmap? {
@@ -623,18 +596,12 @@ class CaptureService : Service() {
 
     private suspend fun runLiveCaptureCycle() {
         if (!isConfigured) return
-        val cycleGen = captureGeneration
-        try {
-            // Retry once on failure — takeScreenshot can be rate-limited
-            // (error code 3, ~1s cooldown) if scene detection polled recently.
-            val raw: Bitmap = captureScreen(gameDisplayId)
-                ?: run { delay(500); captureScreen(gameDisplayId) }
-                ?: return
+        val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager
 
-            // Crop for OCR without recycling raw — we need raw for the screenshot, but only
-            // if the dedup check passes. Keeping raw alive avoids saving screenshots for
-            // every cycle, which would rotate the 5-file cap and delete the screenshot that
-            // is still referenced by the last displayed result.
+        // ScreenshotManager handles rate limiting — no retry needed.
+        val raw: Bitmap = captureScreen(gameDisplayId) ?: return
+
+        try {
             val statusBarHeight = getStatusBarHeightForDisplay(gameDisplayId)
             val top    = maxOf((raw.height * captureTopFraction).toInt(), statusBarHeight)
             val left   = (raw.width  * captureLeftFraction).toInt()
@@ -645,26 +612,19 @@ class CaptureService : Service() {
                 Bitmap.createBitmap(raw, left, top, (right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1))
             else raw
 
-            // Save screenshot and create color reference IMMEDIATELY — the bitmap
-            // from captureDisplay can become invalid after any sub-bitmap operations
-            // due to HardwareBuffer lifecycle issues.
-            lastCleanScreenshotPath = saveScreenshotToCache(raw)
+            // Create color reference for adaptive overlay colors
+            val colorScale = 4
+            val colorRef = Bitmap.createScaledBitmap(raw, raw.width / colorScale, raw.height / colorScale, false)
 
-            // Flash region indicator AFTER screenshot is saved — safe from contamination
+            // Flash region indicator AFTER screenshot is captured
             if (liveShowRegionFlash) {
                 liveShowRegionFlash = false
                 flashRegionIndicator()
             }
-            val colorScale = 4
-            val colorRef = Bitmap.createScaledBitmap(raw, raw.width / colorScale, raw.height / colorScale, false)
-
-            if (cycleGen != captureGeneration) { colorRef.recycle(); raw.recycle(); return }
 
             val ocrBitmap = blackoutFloatingIcon(bitmap, left, top)
             val ocrResult = ocrManager.recognise(ocrBitmap, sourceLang)
             if (ocrBitmap !== raw) ocrBitmap.recycle()
-
-            if (cycleGen != captureGeneration) { colorRef.recycle(); raw.recycle(); return }
 
             if (ocrResult == null) {
                 colorRef.recycle()
@@ -677,8 +637,6 @@ class CaptureService : Service() {
             }
 
             val newText = ocrResult.fullText
-            // Dedup key: only source-language characters (kana/kanji for Japanese).
-            // Punctuation, spaces, and decorative glyphs can vary frame-to-frame.
             val dedupKey = newText.filter { c -> OcrManager.isSourceLangChar(c, sourceLang) }
 
             if (dedupKey.isEmpty()) {
@@ -691,15 +649,10 @@ class CaptureService : Service() {
                 return
             }
 
-            // Fuzzy comparison: tolerate up to LIVE_DEDUP_TOLERANCE character-count
-            // differences. This prevents oscillation where OCR alternates between two
-            // slightly different outputs (e.g. one extra artifact character) for the
-            // same static screen, which would fool an exact-match check every cycle.
+            // Dedup: if text hasn't changed significantly, re-show cached overlay
             if (!isSignificantChange(lastLiveOcrText ?: "", dedupKey)) {
                 colorRef.recycle()
                 raw.recycle()
-                // Text unchanged — re-show the cached overlay (it was hidden on interaction)
-                if (cycleGen != captureGeneration) return // invalidated during OCR
                 val boxes = cachedOverlayBoxes
                 if (boxes != null) {
                     showLiveOverlay(boxes, cachedOverlayCropLeft, cachedOverlayCropTop,
@@ -708,67 +661,68 @@ class CaptureService : Service() {
                 return
             }
             lastLiveOcrText = dedupKey
-            liveTranslationJob?.cancel()
-            val gen = ++captureGeneration
-            onTranslationStarted?.invoke()
 
+            // New text — save screenshot NOW (only on actual text changes, not dedup hits)
+            val screenshotPath = mgr?.saveToCache(raw)
             val screenshotW = raw.width
             val screenshotH = raw.height
-            val screenshotPath = lastCleanScreenshotPath
             raw.recycle()
 
+            // Translate inline (cancellation-safe — if liveCaptureJob is cancelled,
+            // this coroutine is cancelled too, no separate generation tracking needed)
+            onTranslationStarted?.invoke()
             val liveGroupTexts = ocrResult.groupTexts
             val liveGroupBounds = ocrResult.groupBounds
-            liveTranslationJob = serviceScope.launch {
-                try {
-                    val perGroup = translateGroupsSeparately(liveGroupTexts)
-                    if (gen != captureGeneration) return@launch
-                    val translated = perGroup.joinToString("\n\n") { it.first }
-                    val note = perGroup.mapNotNull { it.second }.firstOrNull()
-                    val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    onResult?.invoke(
-                        TranslationResult(
-                            originalText   = newText,
-                            segments       = ocrResult.segments,
-                            translatedText = translated,
-                            timestamp      = timestamp,
-                            screenshotPath = screenshotPath,
-                            note           = note
-                        )
-                    )
-                    // Show translation overlay on the game screen
-                    if (liveGroupBounds.size == perGroup.size) {
-                        // Sample background colors from a ring OUTSIDE each OCR box
-                        // (avoids sampling text pixels). Text color is white or black
-                        // for contrast against the sampled background.
-                        val buffer = 10 / colorScale
-                        val overlayBoxes = perGroup.zip(liveGroupBounds).map { (tr, bounds) ->
-                            val sl = (bounds.left + left) / colorScale
-                            val st = (bounds.top + top) / colorScale
-                            val sr = (bounds.right + left) / colorScale
-                            val sb = (bounds.bottom + top) / colorScale
 
-                            val bgColor = averageColor(colorRef,
-                                sl - buffer, st - buffer, sr + buffer, sb + buffer,
-                                excludeInner = android.graphics.Rect(sl, st, sr, sb))
+            val perGroup = translateGroupsSeparately(liveGroupTexts)
+            val translated = perGroup.joinToString("\n\n") { it.first }
+            val note = perGroup.mapNotNull { it.second }.firstOrNull()
+            val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            onResult?.invoke(
+                TranslationResult(
+                    originalText   = newText,
+                    segments       = ocrResult.segments,
+                    translatedText = translated,
+                    timestamp      = timestamp,
+                    screenshotPath = screenshotPath,
+                    note           = note
+                )
+            )
+            // Show translation overlay on the game screen
+            if (liveGroupBounds.size == perGroup.size) {
+                val buffer = 10 / colorScale
+                val overlayBoxes = perGroup.zip(liveGroupBounds).map { (tr, bounds) ->
+                    val sl = (bounds.left + left) / colorScale
+                    val st = (bounds.top + top) / colorScale
+                    val sr = (bounds.right + left) / colorScale
+                    val sb = (bounds.bottom + top) / colorScale
 
-                            val textColor = if (colorLuminance(bgColor) > 128)
-                                android.graphics.Color.BLACK else android.graphics.Color.WHITE
+                    val bgColor = averageColor(colorRef,
+                        sl - buffer, st - buffer, sr + buffer, sb + buffer,
+                        excludeInner = android.graphics.Rect(sl, st, sr, sb))
 
-                            TranslationOverlayView.TextBox(tr.first, bounds, bgColor, textColor)
-                        }
-                        colorRef.recycle()
-                        // Cache for re-display after dedup-unchanged interactions
-                        cachedOverlayBoxes = overlayBoxes
-                        cachedOverlayCropLeft = left
-                        cachedOverlayCropTop = top
-                        cachedOverlayScreenW = screenshotW
-                        cachedOverlayScreenH = screenshotH
-                        showLiveOverlay(overlayBoxes, left, top, screenshotW, screenshotH)
-                    }
-                } catch (e: Exception) { Log.w(TAG, "Live translation failed: ${e.message}") }
+                    val textColor = if (colorLuminance(bgColor) > 128)
+                        android.graphics.Color.BLACK else android.graphics.Color.WHITE
+
+                    TranslationOverlayView.TextBox(tr.first, bounds, bgColor, textColor)
+                }
+                colorRef.recycle()
+                cachedOverlayBoxes = overlayBoxes
+                cachedOverlayCropLeft = left
+                cachedOverlayCropTop = top
+                cachedOverlayScreenW = screenshotW
+                cachedOverlayScreenH = screenshotH
+                showLiveOverlay(overlayBoxes, left, top, screenshotW, screenshotH)
+            } else {
+                colorRef.recycle()
             }
-        } catch (e: Exception) { Log.w(TAG, "Live capture cycle failed: ${e.message}") }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            raw.recycle()
+            throw e
+        } catch (e: Exception) {
+            raw.recycle()
+            Log.w(TAG, "Live capture cycle failed: ${e.message}")
+        }
     }
 
     private fun colorLuminance(color: Int): Double {
@@ -873,7 +827,7 @@ class CaptureService : Service() {
 
     // ── Capture cycle ─────────────────────────────────────────────────────
 
-    private suspend fun runCaptureCycle(generation: Int) {
+    private suspend fun runCaptureCycle() {
         if (!isConfigured) {
             onError?.invoke("Not configured — tap Translate to set up")
             return
@@ -887,14 +841,12 @@ class CaptureService : Service() {
                 return
             }
 
-            val screenshotPath = saveScreenshotToCache(raw)
+            val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager
+            val screenshotPath = mgr?.saveToCache(raw)
 
             // Flash region indicator AFTER screenshot is saved — safe from contamination
             flashRegionIndicator()
 
-            // Exclude the status bar: dynamically query its height for the game display.
-            // maxOf() means if the user's region already starts below the status bar,
-            // nothing changes; and on displays with no status bar (height == 0) this is a no-op.
             val statusBarHeight = getStatusBarHeightForDisplay(gameDisplayId)
             val top    = maxOf((raw.height * captureTopFraction).toInt(), statusBarHeight)
             val left   = (raw.width  * captureLeftFraction).toInt()
@@ -914,10 +866,6 @@ class CaptureService : Service() {
 
             onStatusUpdate?.invoke(getString(R.string.status_translating))
             val (translated, note) = translateGroups(ocrResult.groupTexts)
-
-            // Discard stale results if a newer capture was started while this one
-            // was in-flight (OkHttp blocking calls aren't cooperatively cancellable).
-            if (generation != captureGeneration) return
 
             val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
             onResult?.invoke(
@@ -1053,18 +1001,6 @@ class CaptureService : Service() {
         return cropped
     }
 
-    private fun saveScreenshotToCache(bitmap: Bitmap): String? {
-        return try {
-            val dir = File(cacheDir, "screenshots").apply { mkdirs() }
-            val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
-            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-            dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(5)?.forEach { it.delete() }
-            file.absolutePath
-        } catch (e: Exception) {
-            Log.e(TAG, "saveScreenshotToCache failed: ${e.message}")
-            null
-        }
-    }
 
     // ── Notification ──────────────────────────────────────────────────────
 

@@ -256,11 +256,7 @@ class DragLookupController(
         Log.d(TAG, "Taking screenshot for full-screen OCR...")
 
         val bitmap = withTimeoutOrNull(3000L) {
-            suspendCancellableCoroutine<Bitmap?> { cont ->
-                service.captureDisplay(displayId) { bmp ->
-                    if (cont.isActive) cont.resume(bmp) { bmp?.recycle() }
-                }
-            }
+            service.screenshotManager?.requestClean(displayId)
         }
         if (bitmap == null) {
             Log.w(TAG, "Screenshot failed or timed out")

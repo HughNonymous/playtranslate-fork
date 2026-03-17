@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.graphics.Bitmap
+import kotlinx.coroutines.launch
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.method.LinkMovementMethod
@@ -201,9 +202,10 @@ class SettingsBottomSheet : DialogFragment() {
         }
 
         displayList.forEach { display ->
-            val a11y = com.gamelens.PlayTranslateAccessibilityService.instance
-            if (a11y != null) {
-                a11y.captureDisplay(display.displayId) { bitmap ->
+            val mgr = com.gamelens.PlayTranslateAccessibilityService.instance?.screenshotManager
+            if (mgr != null) {
+                kotlinx.coroutines.MainScope().launch {
+                    val bitmap = mgr.requestClean(display.displayId)
                     if (bitmap != null) {
                         displayThumbnails[display.displayId] = scaleThumbnail(bitmap)
                         view?.post { if (isAdded) buildDisplayRows(prefs) }

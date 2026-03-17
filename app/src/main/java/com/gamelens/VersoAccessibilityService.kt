@@ -10,7 +10,6 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.view.Choreographer
 import android.util.Log
 import android.view.Display
 import android.view.Gravity
@@ -35,7 +34,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.util.concurrent.Executors
 
 /**
  * Minimal AccessibilityService whose only purpose is to call
@@ -85,8 +83,13 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var debugRunning = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    /** Centralized screenshot manager — all takeScreenshot calls go through here. */
+    var screenshotManager: ScreenshotManager? = null
+        private set
+
     override fun onServiceConnected() {
         instance = this
+        screenshotManager = ScreenshotManager(this)
         // Ensure we can query the window list (needed for nav bar detection
         // during joystick polling). Setting this at runtime avoids needing
         // the user to re-toggle the service after an app update.
@@ -106,6 +109,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         hideRegionDragOverlay()
         dismissFloatingMenu()
         hideFloatingIcon()
+        screenshotManager?.destroy()
+        screenshotManager = null
         serviceScope.cancel()
         instance = null
         return super.onUnbind(intent)
@@ -146,6 +151,39 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         try { overlayView?.let { overlayWm?.removeView(it) } } catch (_: Exception) {}
         overlayView = null
         overlayWm = null
+    }
+
+    // ── Overlay state for ScreenshotManager ──────────────────────────────
+
+    /** State returned by [prepareForCleanCapture], passed to [restoreAfterCapture]. */
+    data class OverlayState(
+        val hadTranslation: Boolean,
+        val hadDebug: Boolean,
+        val hadIndicator: Boolean
+    ) {
+        val hadAnyOverlay get() = hadTranslation || hadDebug || hadIndicator
+    }
+
+    /**
+     * Hides overlays so they don't appear in a clean screenshot.
+     * Returns the previous state so [restoreAfterCapture] can restore it.
+     */
+    fun prepareForCleanCapture(): OverlayState {
+        val state = OverlayState(
+            hadTranslation = translationOverlayView != null,
+            hadDebug = debugOverlayView != null,
+            hadIndicator = regionIndicatorView != null
+        )
+        if (state.hadIndicator) hideRegionIndicator()
+        if (state.hadDebug) debugOverlayView?.visibility = View.INVISIBLE
+        if (state.hadTranslation) translationOverlayView?.visibility = View.INVISIBLE
+        return state
+    }
+
+    /** Restores overlays that were hidden by [prepareForCleanCapture]. */
+    fun restoreAfterCapture(state: OverlayState) {
+        if (state.hadDebug) debugOverlayView?.visibility = View.VISIBLE
+        if (state.hadTranslation) translationOverlayView?.visibility = View.VISIBLE
     }
 
     // ── Capture region indicator (brief flash) ───────────────────────────
@@ -308,36 +346,35 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val display = dm.getDisplay(displayId) ?: run { scheduleDebugCapture(); return }
 
-        captureDisplay(displayId) { bitmap ->
+        serviceScope.launch {
+            val bitmap = screenshotManager?.requestClean(displayId)
             if (bitmap == null || !debugRunning) {
                 bitmap?.recycle()
                 scheduleDebugCapture()
-                return@captureDisplay
+                return@launch
             }
             val screenshotW = bitmap.width
             val screenshotH = bitmap.height
 
-            serviceScope.launch {
-                val ocr = debugOcrManager ?: run { bitmap.recycle(); scheduleDebugCapture(); return@launch }
-                val result = try {
-                    kotlinx.coroutines.withContext(Dispatchers.Default) {
-                        ocr.recognise(bitmap, prefs.sourceLang, collectDebugBoxes = true)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Debug OCR failed: ${e.message}")
-                    null
-                } finally {
-                    bitmap.recycle()
+            val ocr = debugOcrManager ?: run { bitmap.recycle(); scheduleDebugCapture(); return@launch }
+            val result = try {
+                kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    ocr.recognise(bitmap, prefs.sourceLang, collectDebugBoxes = true)
                 }
-
-                val boxes = result?.debugBoxes
-                if (boxes != null && debugRunning) {
-                    showDebugOverlay(display, boxes, 0, 0, screenshotW, screenshotH)
-                } else {
-                    hideDebugOverlay()
-                }
-                scheduleDebugCapture()
+            } catch (e: Exception) {
+                Log.w(TAG, "Debug OCR failed: ${e.message}")
+                null
+            } finally {
+                bitmap.recycle()
             }
+
+            val boxes = result?.debugBoxes
+            if (boxes != null && debugRunning) {
+                showDebugOverlay(display, boxes, 0, 0, screenshotW, screenshotH)
+            } else {
+                hideDebugOverlay()
+            }
+            scheduleDebugCapture()
         }
     }
 
@@ -1090,8 +1127,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         if (effectivelySingleScreen) {
             // Capture BEFORE launching the activity — once the activity appears
             // on a single-screen device it would cover the game content.
-            captureDisplay(displayId) { bitmap ->
-                val intent = Intent(this, com.gamelens.ui.TranslationResultActivity::class.java).apply {
+            serviceScope.launch {
+                val bitmap = screenshotManager?.requestClean(displayId)
+                val intent = Intent(this@PlayTranslateAccessibilityService, com.gamelens.ui.TranslationResultActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     putExtra(com.gamelens.ui.TranslationResultActivity.EXTRA_TOP_FRAC, top)
                     putExtra(com.gamelens.ui.TranslationResultActivity.EXTRA_BOTTOM_FRAC, bottom)
@@ -1099,12 +1137,11 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                     putExtra(com.gamelens.ui.TranslationResultActivity.EXTRA_RIGHT_FRAC, right)
                 }
                 if (bitmap != null) {
-                    // Save to a known path so the activity can load it
                     val path = savePreCapturedScreenshot(bitmap)
                     bitmap.recycle()
                     intent.putExtra(com.gamelens.ui.TranslationResultActivity.EXTRA_SCREENSHOT_PATH, path)
                 }
-                Handler(Looper.getMainLooper()).post { startActivity(intent) }
+                startActivity(intent)
             }
         } else {
             val intent = Intent(this, MainActivity::class.java).apply {
@@ -1150,96 +1187,8 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
         return size
     }
 
-    // ── Screenshot ────────────────────────────────────────────────────────
-
-    /**
-     * Takes a screenshot of [displayId] and returns the result as a software
-     * [Bitmap] via [onResult]. Returns null on failure or if API < 30.
-     *
-     * Must be called on a thread that has a Looper (e.g. main thread).
-     */
-    /** Single background thread for bitmap copies to keep the main thread free. */
-    private val bitmapExecutor = Executors.newSingleThreadExecutor()
-
-    /**
-     * Takes a screenshot WITHOUT hiding overlays. Used for pixel-diff
-     * scene-change detection where we compare non-overlay regions.
-     */
-    fun captureDisplayRaw(displayId: Int, onResult: (Bitmap?) -> Unit) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { onResult(null); return }
-        takeScreenshot(
-            displayId, mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshot: ScreenshotResult) {
-                    bitmapExecutor.execute {
-                        val bitmap = Bitmap
-                            .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                            ?.copy(Bitmap.Config.ARGB_8888, false)
-                        screenshot.hardwareBuffer.close()
-                        onResult(bitmap)
-                    }
-                }
-                override fun onFailure(errorCode: Int) { onResult(null) }
-            }
-        )
-    }
-
-    fun captureDisplay(displayId: Int, onResult: (Bitmap?) -> Unit) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            Log.w(TAG, "takeScreenshot requires API 30+")
-            onResult(null)
-            return
-        }
-
-        // Hide overlays so they don't appear in the screenshot.
-        // The floating icon uses FLAG_SECURE so the compositor excludes it automatically.
-        // The region indicator is removed entirely (not restored after capture).
-        val hadRegionIndicator = regionIndicatorView != null
-        if (hadRegionIndicator) hideRegionIndicator()
-        val hadDebugOverlay = debugOverlayView != null
-        val hadTranslationOverlay = translationOverlayView != null
-        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.INVISIBLE
-        if (hadTranslationOverlay) translationOverlayView?.visibility = android.view.View.INVISIBLE
-
-        val doCapture = {
-            takeScreenshot(
-                displayId,
-                mainExecutor,
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(screenshot: ScreenshotResult) {
-                        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.VISIBLE
-                        if (hadTranslationOverlay) translationOverlayView?.visibility = android.view.View.VISIBLE
-                        // Copy HardwareBuffer → software Bitmap off the main thread
-                        bitmapExecutor.execute {
-                            val bitmap = Bitmap
-                                .wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                                ?.copy(Bitmap.Config.ARGB_8888, false)
-                            screenshot.hardwareBuffer.close()
-                            onResult(bitmap)
-                        }
-                    }
-
-                    override fun onFailure(errorCode: Int) {
-                        if (hadDebugOverlay) debugOverlayView?.visibility = android.view.View.VISIBLE
-                        if (hadTranslationOverlay) translationOverlayView?.visibility = android.view.View.VISIBLE
-                        Log.e(TAG, "takeScreenshot failed on display $displayId, code=$errorCode")
-                        onResult(null)
-                    }
-                }
-            )
-        }
-
-        if (hadRegionIndicator || hadDebugOverlay || hadTranslationOverlay) {
-            // Wait two vsync frames for the compositor to flush the overlay-free
-            // frame (~32 ms at 60 Hz). Frame-accurate and shorter than a fixed delay.
-            val choreographer = Choreographer.getInstance()
-            choreographer.postFrameCallback {
-                choreographer.postFrameCallback { doCapture() }
-            }
-        } else {
-            doCapture()
-        }
-    }
+    // ── Screenshot (legacy, kept for callers not yet migrated) ──────────
+    // All new code should use screenshotManager.requestClean/requestRaw.
 
     companion object {
         private const val TAG = "PlayTranslateA11y"
