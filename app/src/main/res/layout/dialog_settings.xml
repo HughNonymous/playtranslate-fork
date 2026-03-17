@@ -80,17 +80,36 @@
                         android:layout_height="wrap_content"
                         android:text="@string/settings_show_overlay_icon"
                         android:textColor="?attr/colorTextPrimary"
-                        android:textSize="14sp" />
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
-                    <TextView
-                        android:id="@+id/tvOverlayIconHint"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/settings_overlay_icon_hint_dual"
-                        android:textColor="?attr/colorTextHint"
-                        android:textSize="10sp"
-                        android:lineSpacingMultiplier="1.3"
-                        android:layout_marginTop="4dp" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+
+                        <ImageView
+                            android:id="@+id/ivFloatingIconPreview"
+                            android:layout_width="36dp"
+                            android:layout_height="match_parent"
+                            android:layout_marginEnd="8dp"
+                            android:scaleType="fitCenter"
+                            android:adjustViewBounds="true"
+                            android:contentDescription="@string/settings_show_overlay_icon" />
+
+                        <TextView
+                            android:id="@+id/tvOverlayIconHint"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/settings_overlay_icon_hint_dual"
+                            android:textColor="?attr/colorTextPrimary"
+                            android:textSize="13sp"
+                            android:lineSpacingMultiplier="1.4" />
+
+                    </LinearLayout>
 
                 </LinearLayout>
 
@@ -101,15 +120,6 @@
                     android:layout_marginStart="12dp" />
 
             </LinearLayout>
-
-            <TextView
-                android:id="@+id/tvOverlayIconTip"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="— Drag the icon over words for quick dictionary lookups"
-                android:textColor="?attr/colorTextHint"
-                android:textSize="10sp"
-                android:layout_marginTop="8dp" />
 
             <View
                 android:layout_width="match_parent"

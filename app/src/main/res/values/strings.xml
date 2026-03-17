@@ -101,9 +101,10 @@
     <string name="hint_region_name">e.g. Dialogue box</string>
 
     <!-- Overlay icon -->
-    <string name="settings_show_overlay_icon">Show on-screen icon</string>
-    <string name="settings_overlay_icon_hint_dual">Drag this icon over words for quick definition lookups, or tap it for more features.</string>
-    <string name="settings_overlay_icon_hint_single">This is required to access PlayTranslate features while playing your game.</string>
+    <string name="settings_show_overlay_icon">Game screen controls</string>
+    <string name="settings_show_overlay_icon_single">Enable PlayTranslate</string>
+    <string name="settings_overlay_icon_hint_dual">• Drag — Look up words by dragging over game text\n• Hold — Preview translations\n• Tap — Open quick menu</string>
+    <string name="settings_overlay_icon_hint_single">• Drag — Look up words by dragging over game text\n• Hold — Preview translations\n• Tap — Open quick menu</string>
     <string name="overlay_icon_a11y_required_title">Accessibility required</string>
     <string name="overlay_icon_a11y_required_message">The floating overlay icon requires the Accessibility permission to draw on the game screen.\n\nGo to Settings → Accessibility → Installed apps → PlayTranslate → Enable.</string>
 
