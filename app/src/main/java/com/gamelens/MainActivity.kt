@@ -247,7 +247,7 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         super.onNewIntent(intent)
         when (intent?.action) {
             ACTION_DRAG_SENTENCE -> handleDragSentence(intent)
-            ACTION_REGION_CAPTURE -> handleRegionCapture(intent)
+            ACTION_REGION_CAPTURE -> handleRegionCapture()
             ACTION_START_LIVE -> if (!isLiveMode) withAccessibility { startLiveMode() }
             ACTION_STOP_LIVE -> if (isLiveMode) stopLiveMode()
             ACTION_ADD_CUSTOM_REGION -> openAddCustomRegionFromDropdown()
@@ -598,8 +598,7 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
 
     // ── Region capture from floating icon ─────────────────────────────────
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun handleRegionCapture(intent: Intent) {
+    private fun handleRegionCapture() {
         if (isLiveMode) pauseLiveMode()
 
         // The service is already configured with the dragged region
