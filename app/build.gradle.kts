@@ -10,7 +10,7 @@ val localPropsFile = rootProject.file("local.properties")
 if (localPropsFile.exists()) localPropsFile.inputStream().use { localProps.load(it) }
 
 android {
-    namespace = "com.gamelens"
+    namespace = "com.playtranslate"
     compileSdk = 34
 
     defaultConfig {

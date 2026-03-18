@@ -16,7 +16,7 @@
     <!-- ── Results container — hosts TranslationResultFragment ────────── -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/resultsContainer"
-        android:name="com.gamelens.ui.TranslationResultFragment"
+        android:name="com.playtranslate.ui.TranslationResultFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintTop_toTopOf="parent"

@@ -1,0 +1,314 @@
+package com.playtranslate.dictionary
+
+import com.atilika.kuromoji.ipadic.Tokenizer
+
+/**
+ * Japanese morphological analyser + de-inflector.
+ *
+ * [tokenize] uses Kuromoji (IPADIC) to split text into content words and
+ * returns their dictionary (base) form, ready for direct JMdict lookup.
+ * This handles all verb conjugations, katakana, onomatopoeia, etc. natively.
+ *
+ * [candidates] is kept for the word-tap path in DictionaryManager, where the
+ * raw OCR segment (potentially inflected) is looked up directly by the user.
+ */
+object Deinflector {
+
+    data class Candidate(val text: String, val reason: String)
+
+    private data class Rule(val inflected: String, val dictionary: String, val reason: String)
+
+    // Kuromoji tokenizer — lazy so it initialises on first use (always on IO thread).
+    private val tokenizer by lazy { Tokenizer() }
+
+    /** Call once on a background thread early in startup to avoid first-use latency. */
+    fun preload() {
+        tokenizer
+    }
+
+    /** Raw token info returned by [rawTokenInfos]. */
+    internal data class TokenInfo(
+        val surface: String,
+        val pos: String?,
+        val baseForm: String?
+    )
+
+    /**
+     * Returns raw Kuromoji token info for every token in [text] — surface,
+     * part-of-speech level 1, and base form (null when Kuromoji returns "*").
+     * Used by [DictionaryManager] for greedy N-gram phrase detection.
+     */
+    /**
+     * Converts [text] to its full kana representation by replacing each token
+     * with Kuromoji's reading (katakana). Tokens with no reading (punctuation,
+     * unknown words) are kept as-is. The result is suitable for romaji conversion.
+     */
+    fun toKana(text: String): String =
+        tokenizer.tokenize(text).joinToString("") { t ->
+            val r = t.reading
+            if (!r.isNullOrEmpty() && r != "*") r else t.surface
+        }
+
+    /**
+     * Same as [toKana] but returns one kana string per morphological token,
+     * so callers can join with spaces for word-spaced romanisation.
+     */
+    fun toKanaTokens(text: String): List<String> =
+        tokenizer.tokenize(text).map { t ->
+            val r = t.reading
+            if (!r.isNullOrEmpty() && r != "*") r else t.surface
+        }
+
+    internal fun rawTokenInfos(text: String): List<TokenInfo> =
+        tokenizer.tokenize(text).map { t ->
+            TokenInfo(
+                surface  = t.surface,
+                pos      = t.partOfSpeechLevel1,
+                baseForm = t.baseForm.takeIf { !it.isNullOrEmpty() && it != "*" }
+            )
+        }
+
+    /**
+     * Tokenises [text] using Kuromoji morphological analysis and returns the
+     * dictionary form of each content word, deduplicated, in sentence order.
+     *
+     * Content words kept: nouns (名詞), verbs (動詞), i-adjectives (形容詞),
+     * na-adjectives (形容動詞), adverbs (副詞), interjections (感動詞).
+     * Particles, auxiliary verbs, punctuation, etc. are discarded.
+     *
+     * Katakana loanwords and onomatopoeia are classified as 名詞 by Kuromoji
+     * and are returned verbatim (baseForm = "*" for some, fallback to surface).
+     */
+    fun tokenize(text: String): List<String> {
+        val tokens = tokenizer.tokenize(text)
+        return tokens
+            .filter { isContentWord(it.partOfSpeechLevel1) }
+            .map { token ->
+                val base = token.baseForm
+                if (!base.isNullOrEmpty() && base != "*") base else token.surface
+            }
+            .filter { isLookupWorthy(it) }
+            .distinct()
+    }
+
+    private fun isContentWord(pos: String?): Boolean = pos in setOf(
+        "名詞",     // noun — includes katakana loanwords, proper nouns, onomatopoeia
+        "動詞",     // verb
+        "形容詞",   // i-adjective
+        "形容動詞", // na-adjective
+        "副詞",     // adverb
+        "感動詞"    // interjection
+    )
+
+    private fun isLookupWorthy(token: String): Boolean {
+        if (token.isBlank()) return false
+        if (token.all { it.code <= 0x007F }) return false          // ASCII only
+        if (token.length == 1 && token[0] in '\u3041'..'\u3096') return false  // single hiragana
+        return true
+    }
+
+    // ── De-inflection rules ───────────────────────────────────────────────
+    // Used by DictionaryManager.lookup() when a raw (potentially inflected)
+    // word is tapped by the user and needs a fallback dictionary hit.
+
+    private val rules: List<Rule> = listOf(
+
+        // ── Progressive / compound te-forms  (check before plain て/た) ──
+        Rule("ていなかった", "る",  "was not doing"),
+        Rule("ていません",  "る",  "polite neg. progressive"),
+        Rule("ていない",    "る",  "not doing"),
+        Rule("ていた",      "る",  "was doing"),
+        Rule("ていて",      "る",  "doing (te)"),
+        Rule("ている",      "る",  "doing"),
+        Rule("てみた",      "る",  "tried doing"),
+        Rule("てみる",      "る",  "try doing"),
+        Rule("てしまった",  "る",  "ended up doing"),
+        Rule("てしまう",    "る",  "end up doing"),
+        Rule("てた",        "る",  "was doing (colloquial)"),
+        Rule("てる",        "る",  "doing (colloquial)"),
+
+        // ── Past (ta-form) ──
+        Rule("いった",  "いく", "past"),
+        Rule("った",    "う",   "past"),
+        Rule("った",    "つ",   "past"),
+        Rule("った",    "る",   "past"),
+        Rule("いた",    "く",   "past"),
+        Rule("いだ",    "ぐ",   "past"),
+        Rule("した",    "す",   "past"),
+        Rule("んだ",    "ぬ",   "past"),
+        Rule("んだ",    "ぶ",   "past"),
+        Rule("んだ",    "む",   "past"),
+        Rule("た",      "る",   "past"),
+        Rule("した",    "する", "past"),
+        Rule("きた",    "くる", "past"),
+        Rule("来た",    "来る", "past"),
+
+        // ── Negative (nai-form) ──
+        Rule("わなかった","う",  "past negative"),
+        Rule("かなかった","く",  "past negative"),
+        Rule("がなかった","ぐ",  "past negative"),
+        Rule("さなかった","す",  "past negative"),
+        Rule("たなかった","つ",  "past negative"),
+        Rule("ばなかった","ぶ",  "past negative"),
+        Rule("まなかった","む",  "past negative"),
+        Rule("らなかった","る",  "past negative"),
+        Rule("わない",   "う",   "negative"),
+        Rule("かない",   "く",   "negative"),
+        Rule("がない",   "ぐ",   "negative"),
+        Rule("さない",   "す",   "negative"),
+        Rule("たない",   "つ",   "negative"),
+        Rule("ばない",   "ぶ",   "negative"),
+        Rule("まない",   "む",   "negative"),
+        Rule("らない",   "る",   "negative"),
+        Rule("なかった", "る",   "past negative"),
+        Rule("ない",     "る",   "negative"),
+        Rule("しない",   "する", "negative"),
+        Rule("こない",   "くる", "negative"),
+        Rule("来ない",   "来る", "negative"),
+
+        // ── Te-form ──
+        Rule("いって",   "いく", "te-form"),
+        Rule("って",     "う",   "te-form"),
+        Rule("って",     "つ",   "te-form"),
+        Rule("って",     "る",   "te-form"),
+        Rule("いて",     "く",   "te-form"),
+        Rule("いで",     "ぐ",   "te-form"),
+        Rule("して",     "す",   "te-form"),
+        Rule("んで",     "ぬ",   "te-form"),
+        Rule("んで",     "ぶ",   "te-form"),
+        Rule("んで",     "む",   "te-form"),
+        Rule("て",       "る",   "te-form"),
+        Rule("して",     "する", "te-form"),
+        Rule("きて",     "くる", "te-form"),
+        Rule("来て",     "来る", "te-form"),
+
+        // ── Polite (masu-form) ──
+        Rule("いきます", "いく", "polite"),
+        Rule("きます",   "く",   "polite"),
+        Rule("ぎます",   "ぐ",   "polite"),
+        Rule("します",   "す",   "polite"),
+        Rule("ちます",   "つ",   "polite"),
+        Rule("にます",   "ぬ",   "polite"),
+        Rule("びます",   "ぶ",   "polite"),
+        Rule("みます",   "む",   "polite"),
+        Rule("ります",   "る",   "polite"),
+        Rule("います",   "いる", "polite"),
+        Rule("ます",     "る",   "polite"),
+        Rule("します",   "する", "polite"),
+        Rule("きます",   "くる", "polite"),
+        Rule("ました",   "る",   "polite past"),
+        Rule("しました", "する", "polite past"),
+        Rule("きました", "くる", "polite past"),
+        Rule("ません",   "る",   "polite neg."),
+        Rule("しません", "する", "polite neg."),
+        Rule("きません", "くる", "polite neg."),
+
+        // ── Potential ──
+        Rule("える",    "う",   "potential"),
+        Rule("ける",    "く",   "potential"),
+        Rule("げる",    "ぐ",   "potential"),
+        Rule("せる",    "す",   "potential"),
+        Rule("てる",    "つ",   "potential"),
+        Rule("ねる",    "ぬ",   "potential"),
+        Rule("べる",    "ぶ",   "potential"),
+        Rule("める",    "む",   "potential"),
+        Rule("れる",    "る",   "potential"),
+        Rule("られる",  "る",   "potential"),
+        Rule("できる",  "する", "potential"),
+
+        // ── Passive ──
+        Rule("われる",   "う",   "passive"),
+        Rule("かれる",   "く",   "passive"),
+        Rule("がれる",   "ぐ",   "passive"),
+        Rule("される",   "す",   "passive"),
+        Rule("たれる",   "つ",   "passive"),
+        Rule("なれる",   "ぬ",   "passive"),
+        Rule("ばれる",   "ぶ",   "passive"),
+        Rule("まれる",   "む",   "passive"),
+        Rule("られる",   "る",   "passive"),
+        Rule("される",   "する", "passive"),
+        Rule("こられる", "くる", "passive"),
+
+        // ── Causative ──
+        Rule("わせる",   "う",   "causative"),
+        Rule("かせる",   "く",   "causative"),
+        Rule("がせる",   "ぐ",   "causative"),
+        Rule("させる",   "す",   "causative"),
+        Rule("たせる",   "つ",   "causative"),
+        Rule("なせる",   "ぬ",   "causative"),
+        Rule("ばせる",   "ぶ",   "causative"),
+        Rule("ませる",   "む",   "causative"),
+        Rule("らせる",   "る",   "causative"),
+        Rule("させる",   "る",   "causative"),
+        Rule("させる",   "する", "causative"),
+        Rule("こさせる", "くる", "causative"),
+
+        // ── Volitional ──
+        Rule("おう",    "う",   "volitional"),
+        Rule("こう",    "く",   "volitional"),
+        Rule("ごう",    "ぐ",   "volitional"),
+        Rule("そう",    "す",   "volitional"),
+        Rule("とう",    "つ",   "volitional"),
+        Rule("のう",    "ぬ",   "volitional"),
+        Rule("ぼう",    "ぶ",   "volitional"),
+        Rule("もう",    "む",   "volitional"),
+        Rule("ろう",    "る",   "volitional"),
+        Rule("よう",    "る",   "volitional"),
+        Rule("しよう",  "する", "volitional"),
+        Rule("こよう",  "くる", "volitional"),
+
+        // ── Imperative ──
+        Rule("しろ",    "する", "imperative"),
+        Rule("せよ",    "する", "imperative"),
+        Rule("こい",    "くる", "imperative"),
+        Rule("え",      "う",   "imperative"),
+        Rule("け",      "く",   "imperative"),
+        Rule("げ",      "ぐ",   "imperative"),
+        Rule("せ",      "す",   "imperative"),
+        Rule("ね",      "ぬ",   "imperative"),
+        Rule("べ",      "ぶ",   "imperative"),
+        Rule("め",      "む",   "imperative"),
+        Rule("れ",      "る",   "imperative"),
+
+        // ── Conditional (ba-form) ──
+        Rule("すれば",  "する", "conditional"),
+        Rule("くれば",  "くる", "conditional"),
+        Rule("えば",    "う",   "conditional"),
+        Rule("けば",    "く",   "conditional"),
+        Rule("げば",    "ぐ",   "conditional"),
+        Rule("せば",    "す",   "conditional"),
+        Rule("てば",    "つ",   "conditional"),
+        Rule("ねば",    "ぬ",   "conditional"),
+        Rule("べば",    "ぶ",   "conditional"),
+        Rule("めば",    "む",   "conditional"),
+        Rule("れば",    "る",   "conditional"),
+
+        // ── I-adjective inflections ──
+        Rule("くなかった","い",  "past negative"),
+        Rule("かった",   "い",   "past"),
+        Rule("くない",   "い",   "negative"),
+        Rule("くなる",   "い",   "become"),
+        Rule("くて",     "い",   "te-form"),
+        Rule("ければ",   "い",   "conditional"),
+        Rule("く",       "い",   "adverb"),
+    )
+
+    /**
+     * Returns candidate dictionary forms for [word] by suffix-replacement,
+     * deduplicated and ordered longest-suffix-first.
+     */
+    fun candidates(word: String): List<Candidate> {
+        val seen = mutableSetOf<String>()
+        val results = mutableListOf<Candidate>()
+        for (rule in rules) {
+            if (word.length > rule.inflected.length && word.endsWith(rule.inflected)) {
+                val stem = word.dropLast(rule.inflected.length)
+                val candidate = stem + rule.dictionary
+                if (candidate.length >= 2 && seen.add(candidate)) {
+                    results.add(Candidate(candidate, rule.reason))
+                }
+            }
+        }
+        return results
+    }
+}

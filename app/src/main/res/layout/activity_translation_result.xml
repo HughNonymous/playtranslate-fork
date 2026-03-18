@@ -42,7 +42,7 @@
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/resultFragmentContainer"
-        android:name="com.gamelens.ui.TranslationResultFragment"
+        android:name="com.playtranslate.ui.TranslationResultFragment"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
