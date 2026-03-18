@@ -35,7 +35,12 @@ class OcrManager private constructor() {
 
 
     /** A bounding box with optional confidence for debug overlay. */
-    data class DebugBox(val bounds: Rect, val confidence: Float = -1f)
+    data class DebugBox(
+        val bounds: Rect,
+        val confidence: Float = -1f,
+        val text: String = "",
+        val lang: String = ""
+    )
 
     /** Bounding boxes at each OCR hierarchy level, for debug overlay. */
     data class OcrDebugBoxes(
@@ -80,7 +85,7 @@ class OcrManager private constructor() {
         // 2. Group lines by proximity, size, and alignment (not blocks — blocks
         //    can contain spatially distant lines that shouldn't be merged).
         // 3. Discard groups that contain no character from the source language's script.
-        val groups = groupLinesByProximity(visionText.textBlocks)
+        val groups = groupLinesByProximity(visionText.textBlocks, sourceLang)
             .filter { group ->
                 group.any { line -> line.text.any { c -> isSourceLangChar(c, sourceLang) } }
             }
@@ -134,13 +139,13 @@ class OcrManager private constructor() {
             val lineBoxes = mutableListOf<DebugBox>()
             val elementBoxes = mutableListOf<DebugBox>()
             for (block in visionText.textBlocks) {
-                block.boundingBox?.let { blockBoxes += DebugBox(it) }
+                block.boundingBox?.let { blockBoxes += DebugBox(it, text = block.text, lang = block.recognizedLanguage ?: "") }
                 for (line in block.lines) {
                     val lineConf = if (android.os.Build.VERSION.SDK_INT >= 31) line.confidence else -1f
-                    line.boundingBox?.let { lineBoxes += DebugBox(it, lineConf) }
+                    line.boundingBox?.let { lineBoxes += DebugBox(it, lineConf, text = line.text, lang = line.recognizedLanguage ?: "") }
                     for (element in line.elements) {
                         val elemConf = if (android.os.Build.VERSION.SDK_INT >= 31) element.confidence else -1f
-                        element.boundingBox?.let { elementBoxes += DebugBox(it, elemConf) }
+                        element.boundingBox?.let { elementBoxes += DebugBox(it, elemConf, text = element.text, lang = element.recognizedLanguage ?: "") }
                     }
                 }
             }
@@ -278,7 +283,7 @@ class OcrManager private constructor() {
      *  4. Horizontal alignment: the line's left edge is within one line height
      *     of the group's left edge, OR the right edges are similarly aligned.
      */
-    private fun groupLinesByProximity(blocks: List<Text.TextBlock>): List<List<Text.Line>> {
+    private fun groupLinesByProximity(blocks: List<Text.TextBlock>, sourceLang: String = "ja"): List<List<Text.Line>> {
         // Extract all lines from all blocks, sorted top-to-bottom.
         // Filter out low-confidence single-character lines (e.g. game UI arrows
         // misdetected as "く") on API 31+ where confidence is available.
@@ -300,6 +305,15 @@ class OcrManager private constructor() {
                         val isKanji = c in '\u4E00'..'\u9FFF' || c in '\u3400'..'\u4DBF'
                         if (!isKanji) return@filter false
                     }
+                }
+                // Drop garbled multi-char lines: mostly non-source characters AND
+                // low confidence. Both must fail — prefer showing garbled text over
+                // missing a real translation. (e.g. "|edaっidad" = 10% source, 0.28 conf)
+                if (android.os.Build.VERSION.SDK_INT >= 31 && line.text.trim().length > 1) {
+                    val text = line.text.trim()
+                    val sourceCount = text.count { c -> isSourceLangChar(c, sourceLang) }
+                    val ratio = sourceCount.toFloat() / text.length
+                    if (ratio < 0.30f && line.confidence < 0.35f) return@filter false
                 }
                 true
             }
@@ -392,7 +406,7 @@ class OcrManager private constructor() {
         if (visionText.textBlocks.isEmpty()) return null
 
         // Group lines using the same logic as the main OCR pipeline
-        val groups = groupLinesByProximity(visionText.textBlocks)
+        val groups = groupLinesByProximity(visionText.textBlocks, sourceLang)
             .filter { group ->
                 group.any { line -> line.text.any { c -> isSourceLangChar(c, sourceLang) } }
             }
