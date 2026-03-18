@@ -671,10 +671,9 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
                     sendMainActivityIntent(MainActivity.ACTION_STOP_LIVE)
                 }
             }
-            // Reuse the saved screenshot if available (avoids takeScreenshot
-            // rate-limit failures from too many captures in quick succession).
-            val reusePath = CaptureService.instance?.lastCleanScreenshotPath
-            controller.onDragStart(reusePath)
+            // Always take a fresh screenshot — ScreenshotManager handles
+            // rate limiting, and the cached file could be stale.
+            controller.onDragStart()
         }
         icon.onDragMove = { rawX, rawY -> controller.onDragMove(rawX, rawY) }
         icon.onDragEnd = {
