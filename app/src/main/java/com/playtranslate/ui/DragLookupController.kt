@@ -572,13 +572,12 @@ class DragLookupController(
                 wordLookupJob?.join()
                 cache.translation = translation
                 val intent = buildAnkiIntent(service, word, reading, pos, definition,
-                    entry.freqScore, cache.original ?: sentenceOrig, translation)
+                    entry.freqScore, sentenceOrig, translation)
                 service.startActivity(intent)
             }
         } else {
             val intent = buildAnkiIntent(service, word, reading, pos, definition,
-                entry.freqScore,
-                if (hasCachedTranslation) cache.original else sentenceOrig,
+                entry.freqScore, sentenceOrig,
                 if (hasCachedTranslation) cache.translation else null)
             service.startActivity(intent)
         }
