@@ -561,11 +561,13 @@ class CaptureService : Service() {
                 }
             }
 
-            // Filter and compare against previous clean OCR text
+            // Filter and compare against previous clean OCR text.
+            // Only count characters that are NEW (not in the existing text) —
+            // missing characters are expected because the fill hides them.
             val newDedupKey = ocrResult.fullText.filter { c -> OcrManager.isSourceLangChar(c, sourceLang) }
             if (newDedupKey.isEmpty()) return false
             val prevText = lastLiveOcrText ?: return false
-            if (!isSignificantChange(prevText, newDedupKey)) return false
+            if (!hasSignificantAdditions(prevText, newDedupKey)) return false
             Log.d(TAG, "RECHECK: prev='${prevText.take(30)}' new='${newDedupKey.take(30)}' groups=${ocrResult.groupTexts.size}")
 
             // New text found — check proximity to existing overlays
@@ -925,6 +927,26 @@ class CaptureService : Service() {
         // even though absolute diff (2) is within tolerance
         val maxLen = maxOf(a.length, b.length)
         if (maxLen > 0 && diff.toFloat() / maxLen > LIVE_DEDUP_PCT_THRESHOLD) return true
+        return false
+    }
+
+    /**
+     * Returns true if [detected] contains more than 1 character not present
+     * in [existing]. Missing characters are ignored — they're expected when
+     * overlay fill hides previously visible text.
+     */
+    private fun hasSignificantAdditions(existing: String, detected: String): Boolean {
+        val bag = existing.groupingBy { it }.eachCount().toMutableMap()
+        var added = 0
+        for (c in detected) {
+            val count = bag[c] ?: 0
+            if (count > 0) {
+                bag[c] = count - 1
+            } else {
+                added++
+                if (added > 1) return true
+            }
+        }
         return false
     }
 

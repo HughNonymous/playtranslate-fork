@@ -92,9 +92,10 @@ class OcrManager private constructor() {
 
         if (rawGroups.isEmpty()) return null
 
-        val groups = if (screenshotWidth > 0) {
+        val splitResult = if (screenshotWidth > 0) {
             splitMenuGroups(rawGroups, screenshotWidth * scaleFactor)
-        } else rawGroups
+        } else rawGroups.map { SplitGroup(it) }
+        val groups = splitResult.map { it.lines }
 
         val segments = mutableListOf<TextSegment>()
         val fullTextBuilder = StringBuilder()
@@ -127,13 +128,16 @@ class OcrManager private constructor() {
         val fullText = fullTextBuilder.toString().trim()
         if (fullText.isBlank()) return null
 
-        // Compute group bounding boxes (union of lines per group) in original bitmap coords
-        val groupBounds = groups.map { group ->
-            val rects = group.mapNotNull { it.boundingBox }
+        // Compute group bounding boxes (union of lines per group) in original bitmap coords.
+        // For split menu items, use the parent group's left/right so all items align.
+        val groupBounds = splitResult.map { sg ->
+            val rects = sg.lines.mapNotNull { it.boundingBox }
+            val left = sg.parentLeft ?: rects.minOf { it.left }
+            val right = sg.parentRight ?: rects.maxOf { it.right }
             Rect(
-                (rects.minOf { it.left } / scaleFactor).toInt(),
+                (left / scaleFactor).toInt(),
                 (rects.minOf { it.top } / scaleFactor).toInt(),
-                (rects.maxOf { it.right } / scaleFactor).toInt(),
+                (right / scaleFactor).toInt(),
                 (rects.maxOf { it.bottom } / scaleFactor).toInt()
             )
         }
@@ -367,20 +371,31 @@ class OcrManager private constructor() {
         return groups
     }
 
+    private data class SplitGroup(
+        val lines: List<Text.Line>,
+        /** Horizontal bounds from the parent group (scaled coords), set for split menu items. */
+        val parentLeft: Int? = null,
+        val parentRight: Int? = null
+    )
+
     /**
      * Splits groups that look like menus/lists into individual lines.
      * A group is "menu-like" if it has 3+ lines, is narrow (< 1/3 screen),
      * and its line edges don't cluster the way wrapped paragraph text would.
+     * Split items inherit the parent group's left/right bounds for aligned overlays.
      */
     private fun splitMenuGroups(
         groups: List<List<Text.Line>>,
         screenWidthScaled: Float
-    ): List<List<Text.Line>> {
+    ): List<SplitGroup> {
         return groups.flatMap { group ->
             if (group.size >= 3 && isMenuLike(group, screenWidthScaled)) {
-                group.map { listOf(it) }
+                val boxes = group.mapNotNull { it.boundingBox }
+                val groupLeft = boxes.minOf { it.left }
+                val groupRight = boxes.maxOf { it.right }
+                group.map { SplitGroup(listOf(it), parentLeft = groupLeft, parentRight = groupRight) }
             } else {
-                listOf(group)
+                listOf(SplitGroup(group))
             }
         }
     }
