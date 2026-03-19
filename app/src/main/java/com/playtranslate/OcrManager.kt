@@ -62,6 +62,8 @@ class OcrManager private constructor() {
         val groupTexts: List<String> = emptyList(),
         /** Bounding box per group in original (pre-scale) bitmap coordinates. */
         val groupBounds: List<Rect> = emptyList(),
+        /** Number of OCR lines per group (for skeleton placeholder display). */
+        val groupLineCounts: List<Int> = emptyList(),
         /** Debug bounding boxes at block/line/element level, or null if debug is off. */
         val debugBoxes: OcrDebugBoxes? = null
     )
@@ -171,7 +173,8 @@ class OcrManager private constructor() {
             OcrDebugBoxes(blockBoxes, lineBoxes, elementBoxes, groupBoxes, scaleFactor)
         } else null
 
-        return OcrResult(fullText, segments, groupTexts, groupBounds, debugBoxes)
+        val groupLineCounts = groups.map { it.size }
+        return OcrResult(fullText, segments, groupTexts, groupBounds, groupLineCounts, debugBoxes)
     }
 
     /**

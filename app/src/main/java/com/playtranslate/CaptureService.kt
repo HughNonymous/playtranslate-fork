@@ -832,12 +832,13 @@ class CaptureService : Service() {
 
             val liveGroupTexts = ocrResult.groupTexts
             val liveGroupBounds = ocrResult.groupBounds
+            val liveGroupLineCounts = ocrResult.groupLineCounts
 
-            // Sample colors and show shimmer placeholders immediately
+            // Sample colors and show skeleton placeholders immediately
             // so the user sees overlay positions while translations load.
             val buffer = 10 / colorScale
             val cRef = colorRef!!
-            val placeholderBoxes = liveGroupBounds.map { bounds ->
+            val placeholderBoxes = liveGroupBounds.mapIndexed { idx, bounds ->
                 val sl = (bounds.left + left) / colorScale
                 val st = (bounds.top + top) / colorScale
                 val sr = (bounds.right + left) / colorScale
@@ -850,7 +851,8 @@ class CaptureService : Service() {
                 val textColor = if (colorLuminance(bgColor) > 128)
                     android.graphics.Color.BLACK else android.graphics.Color.WHITE
 
-                TranslationOverlayView.TextBox("", bounds, bgColor, textColor)
+                val lineCount = liveGroupLineCounts.getOrElse(idx) { 1 }
+                TranslationOverlayView.TextBox("", bounds, bgColor, textColor, lineCount)
             }
             showLiveOverlay(placeholderBoxes, left, top, screenshotW, screenshotH,
                 startSceneDetection = false)

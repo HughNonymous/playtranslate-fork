@@ -6,8 +6,10 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -20,8 +22,9 @@ import androidx.core.widget.TextViewCompat
  * translated text is readable over game graphics. Font size auto-scales
  * via Android's built-in [TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration].
  *
- * When boxes have empty [TextBox.translatedText], a shimmer (pulsing alpha)
- * animation runs until text is filled in via a subsequent [setBoxes] call.
+ * When boxes have empty [TextBox.translatedText], skeleton placeholder lines
+ * are shown with a pulsing animation until text arrives via a subsequent
+ * [setBoxes] call.
  */
 class TranslationOverlayView(context: Context) : FrameLayout(context) {
 
@@ -32,7 +35,9 @@ class TranslationOverlayView(context: Context) : FrameLayout(context) {
         /** Average color of the game content behind this box (ARGB). */
         val bgColor: Int = Color.argb(200, 0, 0, 0),
         /** Text color — estimated from game text or chosen for contrast. */
-        val textColor: Int = Color.WHITE
+        val textColor: Int = Color.WHITE,
+        /** Number of OCR lines in this group (for skeleton placeholders). */
+        val lineCount: Int = 1
     )
 
     private val dp = context.resources.displayMetrics.density
@@ -42,6 +47,9 @@ class TranslationOverlayView(context: Context) : FrameLayout(context) {
     private val boxPadding = 6f * dp
     /** Small inset so text doesn't touch the edges of the background. */
     private val textMargin = (3f * dp).toInt()
+    private val skeletonBarHeight = (8f * dp).toInt()
+    private val skeletonBarGap = (4f * dp).toInt()
+    private val skeletonCornerRadius = 3f * dp
 
     private var boxes: List<TextBox> = emptyList()
     private var cropOffsetX = 0
@@ -97,6 +105,7 @@ class TranslationOverlayView(context: Context) : FrameLayout(context) {
     private fun rebuildChildren() {
         shimmerAnimator?.cancel()
         shimmerAnimator = null
+        skeletonBars.clear()
         removeAllViews()
         if (boxes.isEmpty()) return
 
@@ -133,19 +142,22 @@ class TranslationOverlayView(context: Context) : FrameLayout(context) {
 
         val hasPlaceholders = boxes.any { it.translatedText.isEmpty() }
 
-        // Create a TextView for each box
         boxes.zip(finalRects).forEach { (box, rect) ->
             val rectW = rect.width().toInt().coerceAtLeast(1)
             val rectH = rect.height().toInt().coerceAtLeast(1)
 
-            val tv = TextView(context).apply {
-                text = box.translatedText
-                setTextColor(box.textColor)
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(textMargin, textMargin, textMargin, textMargin)
-                setBackgroundColor(box.bgColor)
-                if (box.translatedText.isNotEmpty()) {
+            val child: View = if (box.translatedText.isEmpty()) {
+                // Skeleton placeholder: matched bg with text-colored bars
+                buildSkeletonView(rectW, rectH, box.lineCount, box.bgColor, box.textColor)
+            } else {
+                // Translated text
+                TextView(context).apply {
+                    text = box.translatedText
+                    setTextColor(box.textColor)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(textMargin, textMargin, textMargin, textMargin)
+                    setBackgroundColor(box.bgColor)
                     TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
                         this, minTextSizeSp, maxTextSizeSp, 1, TypedValue.COMPLEX_UNIT_SP
                     )
@@ -156,22 +168,58 @@ class TranslationOverlayView(context: Context) : FrameLayout(context) {
                 leftMargin = rect.left.toInt()
                 topMargin = rect.top.toInt()
             }
-            addView(tv, lp)
+            addView(child, lp)
         }
 
         if (hasPlaceholders) startShimmer()
     }
 
+    /** Builds a skeleton placeholder with [lineCount] bars evenly spaced within the box. */
+    private fun buildSkeletonView(boxW: Int, boxH: Int, lineCount: Int, bgColor: Int, barColor: Int): View {
+        val container = FrameLayout(context).apply {
+            setBackgroundColor(bgColor)
+        }
+
+        val sideMargin = textMargin * 2
+        val availW = boxW - sideMargin * 2
+
+        for (line in 0 until lineCount) {
+            val widthFraction = if (line == lineCount - 1 && lineCount > 1) 0.6f else 0.85f
+            val barW = (availW * widthFraction).toInt().coerceAtLeast(1)
+
+            // Evenly distribute: bar centers at boxH*(i+1)/(N+1)
+            val centerY = boxH * (line + 1) / (lineCount + 1)
+            val barTop = centerY - skeletonBarHeight / 2
+
+            val bar = View(context).apply {
+                background = GradientDrawable().apply {
+                    setColor(barColor)
+                    cornerRadius = skeletonCornerRadius
+                }
+            }
+            skeletonBars.add(bar)
+            val barLp = LayoutParams(barW, skeletonBarHeight).apply {
+                leftMargin = sideMargin
+                topMargin = barTop
+            }
+            container.addView(bar, barLp)
+        }
+
+        return container
+    }
+
+    private val skeletonBars = mutableListOf<View>()
+
     private fun startShimmer() {
-        shimmerAnimator = ValueAnimator.ofFloat(0.4f, 0.8f).apply {
+        shimmerAnimator = ValueAnimator.ofFloat(0.8f, 0.3f).apply {
             duration = 800
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { anim ->
                 val a = anim.animatedValue as Float
-                for (i in 0 until childCount) {
-                    getChildAt(i)?.alpha = a
+                for (bar in skeletonBars) {
+                    bar.alpha = a
                 }
             }
             start()
