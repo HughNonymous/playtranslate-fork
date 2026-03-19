@@ -90,7 +90,7 @@ class DictionaryManager private constructor(private val context: Context) {
             val maxN = minOf(4, tokens.size - i)
             for (n in maxN downTo 2) {
                 val phrase = surfaces.subList(i, i + n).joinToString("")
-                if (isLookupWorthy(phrase) && queryEntryIds(database, phrase).isNotEmpty()) {
+                if (isLookupWorthy(phrase) && hasEntry(database, phrase)) {
                     result.add(phrase to phrase)
                     i += n
                     advanced = true
@@ -248,6 +248,15 @@ class DictionaryManager private constructor(private val context: Context) {
      * Returns entry IDs matching [word] as a kanji or reading form, up to 8,
      * sorted by frequency (most common first).
      */
+    /** Fast existence check — no JOIN, no sorting. Used by tokenization. */
+    private fun hasEntry(db: SQLiteDatabase, word: String): Boolean {
+        db.rawQuery("SELECT 1 FROM kanji WHERE text = ? LIMIT 1", arrayOf(word))
+            .use { if (it.moveToFirst()) return true }
+        db.rawQuery("SELECT 1 FROM reading WHERE text = ? LIMIT 1", arrayOf(word))
+            .use { if (it.moveToFirst()) return true }
+        return false
+    }
+
     private fun queryEntryIds(db: SQLiteDatabase, word: String): List<Long> {
         val ids = mutableListOf<Long>()
 
