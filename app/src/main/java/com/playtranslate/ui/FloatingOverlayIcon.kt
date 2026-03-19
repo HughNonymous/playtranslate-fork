@@ -45,9 +45,15 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     var compactMode = false
         set(value) { field = value; invalidate() }
 
+    /** When true, the circle fill turns red to indicate live mode is active. */
+    var liveMode = false
+        set(value) { field = value; invalidate() }
+
     // ── Normal mode paints ──────────────────────────────────────────────
+    private val defaultCircleColor = Color.parseColor("#CC000000")
+    private val liveCircleColor = Color.parseColor("#CC990000")
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#CC000000")
+        color = defaultCircleColor
         style = Paint.Style.FILL
     }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -211,6 +217,7 @@ class FloatingOverlayIcon(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val center = viewSizePx / 2f
         val r = circleSizePx / 2f
+        circlePaint.color = if (liveMode) liveCircleColor else defaultCircleColor
 
         if (inDragMode) {
             // Ring only (transparent inside so text is visible for screenshot)

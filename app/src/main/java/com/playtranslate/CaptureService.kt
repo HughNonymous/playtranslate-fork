@@ -284,6 +284,7 @@ class CaptureService : Service() {
     fun startLive() {
         liveActive = true
         liveShowRegionFlash = true
+        PlayTranslateAccessibilityService.instance?.floatingIcon?.liveMode = true
         lastLiveOcrText = null
         cachedOverlayBoxes = null
         captureJob?.cancel()
@@ -313,6 +314,7 @@ class CaptureService : Service() {
         cachedOverlayBoxes = null
         PlayTranslateAccessibilityService.instance?.stopInputMonitoring()
         PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
+        PlayTranslateAccessibilityService.instance?.floatingIcon?.liveMode = false
         onLiveStopped?.invoke()
     }
 

@@ -59,7 +59,7 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     private var overlayWm: WindowManager? = null
     private var dragView: RegionDragView? = null
     private var dragWm: WindowManager? = null
-    private var floatingIcon: FloatingOverlayIcon? = null
+    internal var floatingIcon: FloatingOverlayIcon? = null
     private var floatingIconWm: WindowManager? = null
     private var floatingIconDisplayId: Int = -1
     var dragLookupController: DragLookupController? = null
