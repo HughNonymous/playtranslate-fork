@@ -412,8 +412,11 @@ class CaptureService : Service() {
      * Start scene-change detection after overlays are shown.
      *
      * @param overlayBoxes Overlay bounding rects in full-display coordinates.
-     * @param overlayTextBoxes TextBox list (unused currently, reserved for future).
-     * @param cleanRef Unused — kept for API compatibility during development.
+     * @param overlayTextBoxes TextBox list with textColor for pixel filtering.
+     * @param cleanRef Clean screenshot (before overlays). Non-overlay pixel
+     *   values are extracted immediately as the baseline for change detection.
+     *   This catches accumulated changes (e.g. typewriter effects) that a
+     *   delayed raw reference would miss. The bitmap is NOT held.
      */
     private fun startSceneChangeDetection(
         overlayBoxes: List<android.graphics.Rect>,
@@ -423,38 +426,26 @@ class CaptureService : Service() {
         stopSceneChangeDetection()
         val mgr = PlayTranslateAccessibilityService.instance?.screenshotManager ?: return
 
-        sceneCheckJob = serviceScope.launch {
-            // Brief delay to let the overlay render before taking raw reference
-            delay(300L)
+        // Build sample positions and extract clean reference pixels NOW
+        // (before the coroutine launches and the bitmap is recycled).
+        val cw = cleanRef?.width ?: 0
+        val ch = cleanRef?.height ?: 0
+        val regionTop = if (ch > 0) (ch * captureTopFraction).toInt() else 0
+        val regionBottom = if (ch > 0) (ch * captureBottomFraction).toInt() else 0
+        val regionLeft = if (cw > 0) (cw * captureLeftFraction).toInt() else 0
+        val regionRight = if (cw > 0) (cw * captureRightFraction).toInt() else 0
 
-            // Take raw reference frame (overlays visible). This is both the
-            // non-overlay AND overlay pixel reference — we compare current raw
-            // frames against this. For overlay pixels, any change means the
-            // game content underneath changed (same overlay + different game = different pixel).
-            var refBitmap: Bitmap? = null
-            while (liveActive && refBitmap == null) {
-                refBitmap = mgr.requestRaw(gameDisplayId)
-            }
-            if (refBitmap == null) return@launch
+        val preNonOverlayPositions = mutableListOf<Pair<Int, Int>>()
+        val preOverlaySamples = mutableListOf<OverlaySampleData>()
 
-            // Build sample positions: separate non-overlay and overlay pixels
-            val regionTop = (refBitmap.height * captureTopFraction).toInt()
-            val regionBottom = (refBitmap.height * captureBottomFraction).toInt()
-            val regionLeft = (refBitmap.width * captureLeftFraction).toInt()
-            val regionRight = (refBitmap.width * captureRightFraction).toInt()
-
-            val nonOverlayPositions = mutableListOf<Pair<Int, Int>>()
-            val overlaySamples = mutableListOf<OverlaySampleData>()
-
-            // Non-overlay: sample every 10th pixel (coarse, for scene change detection)
+        if (regionBottom > regionTop && regionRight > regionLeft) {
             for (y in regionTop until regionBottom step 10) {
                 for (x in regionLeft until regionRight step 10) {
                     if (overlayBoxes.none { it.contains(x, y) }) {
-                        nonOverlayPositions.add(x to y)
+                        preNonOverlayPositions.add(x to y)
                     }
                 }
             }
-            // Overlay: sample every 3rd pixel (dense, for text change detection)
             for (box in overlayBoxes) {
                 val boxIdx = overlayBoxes.indexOf(box)
                 val textColor = overlayTextBoxes.getOrNull(boxIdx)?.textColor ?: 0
@@ -464,55 +455,96 @@ class CaptureService : Service() {
                 val bRight = box.right.coerceIn(regionLeft, regionRight)
                 for (y in bTop until bBottom step 3) {
                     for (x in bLeft until bRight step 3) {
-                        overlaySamples.add(OverlaySampleData(x, y, textColor, boxIdx))
+                        preOverlaySamples.add(OverlaySampleData(x, y, textColor, boxIdx))
                     }
                 }
             }
+        }
+
+        // Extract clean reference pixels at non-overlay positions.
+        // This baseline is from BEFORE overlays and before typewriter advanced.
+        val cleanNonOverlayPixels = if (cleanRef != null && preNonOverlayPositions.isNotEmpty()) {
+            IntArray(preNonOverlayPositions.size) { i ->
+                val (x, y) = preNonOverlayPositions[i]
+                if (x < cleanRef.width && y < cleanRef.height) cleanRef.getPixel(x, y) else 0
+            }
+        } else null
+        // cleanRef can now be recycled by the caller.
+
+        sceneCheckJob = serviceScope.launch {
+            // Wait for first raw frame to set up references
+            val firstBitmap = mgr.requestRaw(gameDisplayId) ?: return@launch
+
+            // Build positions from the raw frame if not pre-built (no cleanRef)
+            val nonOverlayPositions = preNonOverlayPositions.ifEmpty {
+                val rTop = (firstBitmap.height * captureTopFraction).toInt()
+                val rBottom = (firstBitmap.height * captureBottomFraction).toInt()
+                val rLeft = (firstBitmap.width * captureLeftFraction).toInt()
+                val rRight = (firstBitmap.width * captureRightFraction).toInt()
+                val pos = mutableListOf<Pair<Int, Int>>()
+                for (y in rTop until rBottom step 10) {
+                    for (x in rLeft until rRight step 10) {
+                        if (overlayBoxes.none { it.contains(x, y) }) pos.add(x to y)
+                    }
+                }
+                pos
+            }
+            val overlaySamples = preOverlaySamples.ifEmpty {
+                val rTop = (firstBitmap.height * captureTopFraction).toInt()
+                val rBottom = (firstBitmap.height * captureBottomFraction).toInt()
+                val rLeft = (firstBitmap.width * captureLeftFraction).toInt()
+                val rRight = (firstBitmap.width * captureRightFraction).toInt()
+                val samples = mutableListOf<OverlaySampleData>()
+                for (box in overlayBoxes) {
+                    val boxIdx = overlayBoxes.indexOf(box)
+                    val tc = overlayTextBoxes.getOrNull(boxIdx)?.textColor ?: 0
+                    for (y in box.top.coerceIn(rTop, rBottom) until box.bottom.coerceIn(rTop, rBottom) step 3) {
+                        for (x in box.left.coerceIn(rLeft, rRight) until box.right.coerceIn(rLeft, rRight) step 3) {
+                            samples.add(OverlaySampleData(x, y, tc, boxIdx))
+                        }
+                    }
+                }
+                samples
+            }
 
             if (nonOverlayPositions.isEmpty() && overlaySamples.isEmpty()) {
-                refBitmap.recycle(); return@launch
+                firstBitmap.recycle(); return@launch
             }
 
-            val refNonOverlayPixels = IntArray(nonOverlayPositions.size) { i ->
+            // Non-overlay: clean baseline if available, else first raw frame
+            val refNonOverlayPixels = cleanNonOverlayPixels ?: IntArray(nonOverlayPositions.size) { i ->
                 val (x, y) = nonOverlayPositions[i]
-                if (x < refBitmap.width && y < refBitmap.height) refBitmap.getPixel(x, y) else 0
+                if (x < firstBitmap.width && y < firstBitmap.height) firstBitmap.getPixel(x, y) else 0
             }
-            // For overlay pixels, record reference values but skip pixels that
-            // match the overlay's text color (our translation text, not game content).
-            val refOverlayPixels = IntArray(overlaySamples.size)
-            val overlayPixelActive = BooleanArray(overlaySamples.size)  // false = skip this pixel
-            for (i in overlaySamples.indices) {
+            // Overlay: first raw frame (includes our rendered overlays)
+            val refOverlayPixels = IntArray(overlaySamples.size) { i ->
                 val s = overlaySamples[i]
-                val px = if (s.x < refBitmap.width && s.y < refBitmap.height) refBitmap.getPixel(s.x, s.y) else 0
-                refOverlayPixels[i] = px
-                // Skip if pixel matches our text color (it's our translation text, not game content)
-                overlayPixelActive[i] = !isColorMatch(px, s.textColor)
+                if (s.x < firstBitmap.width && s.y < firstBitmap.height) firstBitmap.getPixel(s.x, s.y) else 0
             }
-            refBitmap.recycle()
+            val overlayPixelActive = BooleanArray(overlaySamples.size) { i ->
+                !isColorMatch(refOverlayPixels[i], overlaySamples[i].textColor)
+            }
+            firstBitmap.recycle()
 
             val activeCount = overlayPixelActive.count { it }
-            val totalOverlay = overlaySamples.size
-            DetectionLog.log("Setup: ${nonOverlayPositions.size} non-ovr, $totalOverlay ovr ($activeCount active, ${totalOverlay - activeCount} text-skipped)")
+            val refSource = if (cleanNonOverlayPixels != null) "clean" else "raw"
+            DetectionLog.log("Setup: ${nonOverlayPositions.size} non-ovr ($refSource), ${overlaySamples.size} ovr ($activeCount active)")
 
-            // Poll loop — reuse pixel arrays to avoid GC pressure
+            // Poll loop
             var sceneMoving = false
             var hasPrev = false
-            val nonOverlayA = IntArray(nonOverlayPositions.size)
-            val nonOverlayB = IntArray(nonOverlayPositions.size)
-            var currentNonOverlay = nonOverlayA
-            var prevNonOverlay = nonOverlayB
+            var currentNonOverlay = IntArray(nonOverlayPositions.size)
+            var prevNonOverlay = IntArray(nonOverlayPositions.size)
             val currentOverlay = IntArray(overlaySamples.size)
 
             while (liveActive) {
                 val bitmap = mgr.requestRaw(gameDisplayId)
                 if (bitmap == null) continue
 
-                // Read non-overlay pixels
                 for (i in nonOverlayPositions.indices) {
                     val (x, y) = nonOverlayPositions[i]
                     currentNonOverlay[i] = if (x < bitmap.width && y < bitmap.height) bitmap.getPixel(x, y) else 0
                 }
-                // Read overlay pixels
                 for (i in overlaySamples.indices) {
                     val s = overlaySamples[i]
                     currentOverlay[i] = if (s.x < bitmap.width && s.y < bitmap.height) bitmap.getPixel(s.x, s.y) else 0
