@@ -488,6 +488,8 @@ class CaptureService : Service() {
 
                     cachedOverlayBoxes = remainingBoxes.ifEmpty { null }
                     detectionOverlayBoxes = remainingFullBoxes
+                    // Clear dedup text so the removed boxes' text is re-discovered as "new"
+                    lastLiveOcrText = null
 
                     if (remainingBoxes.isNotEmpty()) {
                         showLiveOverlay(remainingBoxes, cachedOverlayCropLeft, cachedOverlayCropTop,
@@ -830,7 +832,7 @@ class CaptureService : Service() {
     // Old scene-change detection removed — replaced by unified poll loop.
     // See handleRawFrame() and handleCleanFrame().
     private val SCENE_CHANGE_THRESHOLD = 0.30f  // 30% of sampled pixels must change
-    private val OVERLAY_CHANGE_THRESHOLD = 0.10f // 10% of overlay pixels (per box) must change
+    private val OVERLAY_CHANGE_THRESHOLD = 0.05f // 5% of overlay pixels (per box) must change
     private val PIXEL_DIFF_THRESHOLD = 30       // per-channel RGB difference for non-overlay pixels
     private val OVERLAY_PIXEL_DIFF_THRESHOLD = 6 // lower threshold for overlay pixels (attenuated by ~90% alpha)
 
@@ -967,8 +969,10 @@ class CaptureService : Service() {
 
             val newDedupKey = ocrResult.fullText.filter { c -> OcrManager.isSourceLangChar(c, sourceLang) }
             if (newDedupKey.isEmpty()) return false
-            val prevText = lastLiveOcrText ?: return false
-            if (!hasSignificantAdditions(prevText, newDedupKey)) return false
+            val prevText = lastLiveOcrText
+            // If prevText is null (e.g., after selective removal), treat all text as new.
+            // Otherwise, check for significant additions.
+            if (prevText != null && !hasSignificantAdditions(prevText, newDedupKey)) return false
 
             val anyClose = ocrResult.groupBounds.any { newRect ->
                 overlays.any { existing ->
