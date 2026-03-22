@@ -135,7 +135,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Compact icon"
+                    android:text="Small icon"
                     android:textColor="?attr/colorTextPrimary"
                     android:textSize="14sp" />
 
@@ -453,38 +453,6 @@
                 android:textSize="10sp"
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="16dp" />
-
-            <!-- Live mode toggle -->
-            <LinearLayout
-                android:id="@+id/rowHideLiveMode"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Hide live mode button"
-                    android:textColor="?attr/colorTextPrimary"
-                    android:textSize="14sp" />
-
-                <Switch
-                    android:id="@+id/switchHideLiveMode"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Hides the live capture button and hint text"
-                android:textColor="?attr/colorTextHint"
-                android:textSize="10sp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="8dp" />
 
             <!-- Show transliteration toggle -->
             <LinearLayout

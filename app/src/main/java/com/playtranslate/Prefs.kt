@@ -58,10 +58,6 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_ANKI_DECK_NAME, "") ?: ""
         set(v) = sp.edit().putString(KEY_ANKI_DECK_NAME, v).apply()
 
-    var hideLiveMode: Boolean
-        get() = sp.getBoolean(KEY_HIDE_LIVE_MODE, false)
-        set(v) = sp.edit().putBoolean(KEY_HIDE_LIVE_MODE, v).apply()
-
     var showTransliteration: Boolean
         get() = sp.getBoolean(KEY_SHOW_TRANSLITERATION, false)
         set(v) = sp.edit().putBoolean(KEY_SHOW_TRANSLITERATION, v).apply()
@@ -183,7 +179,6 @@ class Prefs(context: Context) {
         private const val KEY_ANKI_DECK_NAME = "anki_deck_name"
         private const val KEY_REGION_LIST    = "region_list"
         private const val KEY_DEEPL_KEY      = "deepl_api_key"
-        private const val KEY_HIDE_LIVE_MODE        = "hide_live_mode"
         private const val KEY_THEME_INDEX           = "theme_index"
         private const val KEY_CAPTURE_INTERVAL_SEC  = "capture_interval_sec"
         private const val KEY_CAPTURE_METHOD           = "capture_method"

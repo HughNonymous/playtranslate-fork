@@ -271,7 +271,6 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         initLiveHintText()
         updateRegionButton()
         updateActionButtonState()
-        applyLiveModeVisibilitySetting()
     }
 
     override fun onStop() {
@@ -477,9 +476,6 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
                 captureService?.resetConfiguration()
                 configureService()
                 PlayTranslateAccessibilityService.instance?.ensureFloatingIcon()
-            }
-            onHideLiveModeChanged = {
-                applyLiveModeVisibilitySetting()
             }
             onScreenModeChanged = {
                 checkOnboardingState()
@@ -811,17 +807,6 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
         val entry = regions.getOrElse(prefs.captureRegionIndex) { Prefs.DEFAULT_REGION_LIST[0] }
         val label = overrideRegionLabel ?: entry.label
         return "Searching for $lang in the \"$label\" area"
-    }
-
-    private fun applyLiveModeVisibilitySetting() {
-        val hide = prefs.hideLiveMode
-        if (hide && isLiveMode) stopLiveMode()
-        liveButtonContainer.visibility = if (hide) View.GONE else View.VISIBLE
-        val frag = resultFragment ?: return
-        if (frag.isStatusVisible()) {
-            val isIdle = frag.getStatusText() == getString(R.string.status_idle)
-            frag.setLiveHintVisibility(isIdle && !hide && !isLiveMode)
-        }
     }
 
     private fun langDisplayName(langCode: String): String =

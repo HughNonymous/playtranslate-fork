@@ -47,9 +47,6 @@ class SettingsBottomSheet : DialogFragment() {
 
     /** Called when the selected capture display changes. */
     var onDisplayChanged: (() -> Unit)? = null
-    /** Called when the hide-live-mode switch changes. */
-    var onHideLiveModeChanged: (() -> Unit)? = null
-
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     /** Called when the debug force-single-screen toggle changes. */
     var onScreenModeChanged: (() -> Unit)? = null
@@ -118,7 +115,6 @@ class SettingsBottomSheet : DialogFragment() {
         settingsScrollView  = view.findViewById(R.id.settingsScrollView)
         val etDeeplKey      = view.findViewById<EditText>(R.id.etDeeplKey)
         spinnerAnkiDeck     = view.findViewById(R.id.spinnerAnkiDeck)
-        val switchHideLiveMode = view.findViewById<Switch>(R.id.switchHideLiveMode)
         val llThemePicker   = view.findViewById<LinearLayout>(R.id.llThemePicker)
 
         // Restore scroll position after theme recreate.
@@ -285,16 +281,6 @@ class SettingsBottomSheet : DialogFragment() {
                 prefs.captureIntervalSec = v
             }
         })
-
-        // ── Hide live mode (auto-save on toggle) ──────────────────────────
-        switchHideLiveMode.isChecked = prefs.hideLiveMode
-        switchHideLiveMode.setOnCheckedChangeListener { _, checked ->
-            prefs.hideLiveMode = checked
-            onHideLiveModeChanged?.invoke()
-        }
-        view.findViewById<View>(R.id.rowHideLiveMode).setOnClickListener {
-            switchHideLiveMode.toggle()
-        }
 
         // ── Show transliteration (auto-save on toggle) ──────────────────
         val switchShowTransliteration = view.findViewById<Switch>(R.id.switchShowTransliteration)
