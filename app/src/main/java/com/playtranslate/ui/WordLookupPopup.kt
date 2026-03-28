@@ -65,6 +65,7 @@ class WordLookupPopup(
         senses: List<SenseDisplay>,
         freqScore: Int,
         isCommon: Boolean = false,
+        jlptLevel: Int = 0,
         screenX: Int, screenY: Int,
         screenW: Int, screenH: Int
     ) {
@@ -79,12 +80,12 @@ class WordLookupPopup(
         val baseW = (screenW * 0.85f).toInt().coerceAtMost(dp(360))
         val hasRightButton = showAnkiButton || showOpenButton
         val popupW = if (hasRightButton) baseW + ankiColumnW else baseW
-        val maxCardH = dp(160)
+        val maxCardH = dp(220)
         val minCardH = dp(64)
         val margin = dp(40)
 
         // Build card first so we can measure its desired height
-        val card = buildCardView(word, reading, senses, freqScore, isCommon, popupW)
+        val card = buildCardView(word, reading, senses, freqScore, isCommon, jlptLevel, popupW)
         val widthSpec = View.MeasureSpec.makeMeasureSpec(popupW, View.MeasureSpec.EXACTLY)
         val heightSpec = View.MeasureSpec.makeMeasureSpec(maxCardH, View.MeasureSpec.AT_MOST)
         card.measure(widthSpec, heightSpec)
@@ -200,6 +201,7 @@ class WordLookupPopup(
         senses: List<SenseDisplay>,
         freqScore: Int,
         isCommon: Boolean,
+        jlptLevel: Int,
         width: Int
     ): View {
         val bg = GradientDrawable().apply {
@@ -275,8 +277,8 @@ class WordLookupPopup(
             setPadding(0, 0, dp(4), 0)
         }
 
-        // Common badge + frequency stars row
-        if (isCommon || freqScore > 0) {
+        // Common badge + JLPT badge + frequency stars row
+        if (isCommon || freqScore > 0 || jlptLevel in 1..5) {
             val metaRow = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -296,13 +298,37 @@ class WordLookupPopup(
                 }
                 metaRow.addView(badge)
             }
-            if (freqScore > 0) {
+            if (jlptLevel in 1..5) {
                 metaRow.addView(TextView(ctx).apply {
-                    text = "★".repeat(freqScore.coerceAtMost(5))
-                    setTextColor(Color.parseColor("#606060"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                    if (isCommon) setPadding(dp(6), 0, 0, 0)
+                    text = "N$jlptLevel"
+                    setTextColor(Color.parseColor("#A0A0A0"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(dp(5), dp(1), dp(5), dp(1))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#383838"))
+                        cornerRadius = dp(4).toFloat()
+                    }
+                    if (isCommon) setPadding(dp(6), dp(1), dp(5), dp(1))
                 })
+            }
+            if (freqScore > 0) {
+                val freqLabel = when (freqScore) {
+                    5 -> "★★★★★ Top 3k"
+                    4 -> "★★★★ Top 6k"
+                    3 -> "★★★ Top 12k"
+                    2 -> "★★ Top 20k"
+                    1 -> "★ Top 30k"
+                    else -> null
+                }
+                if (freqLabel != null) {
+                    metaRow.addView(TextView(ctx).apply {
+                        text = freqLabel
+                        setTextColor(Color.parseColor("#606060"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                        if (isCommon || jlptLevel in 1..5) setPadding(dp(6), 0, 0, 0)
+                    })
+                }
             }
             rightCol.addView(metaRow)
         }
@@ -322,6 +348,14 @@ class WordLookupPopup(
                 setTextColor(Color.parseColor("#EFEFEF"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             })
+            if (sense.misc.isNotEmpty()) {
+                rightCol.addView(TextView(ctx).apply {
+                    text = sense.misc.joinToString(" · ")
+                    setTextColor(Color.parseColor("#808080"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+                })
+            }
         }
 
         rightScroll.addView(rightCol)
@@ -393,6 +427,7 @@ class WordLookupPopup(
 
     data class SenseDisplay(
         val pos: String,
-        val definition: String
+        val definition: String,
+        val misc: List<String> = emptyList()
     )
 }

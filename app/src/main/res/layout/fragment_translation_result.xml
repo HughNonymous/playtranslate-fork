@@ -159,6 +159,20 @@
                     android:layout_weight="1"
                     android:text="@string/section_original" />
 
+                <TextView
+                    android:id="@+id/btnTranslateOnce"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:gravity="center"
+                    android:text="@string/btn_translate"
+                    android:textColor="?attr/colorAccentPrimary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:paddingHorizontal="10dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:layout_marginEnd="8dp"
+                    android:visibility="gone" />
+
                 <ImageButton
                     android:id="@+id/btnEditOriginal"
                     android:layout_width="32dp"

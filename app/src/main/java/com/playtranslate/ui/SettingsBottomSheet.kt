@@ -134,6 +134,19 @@ class SettingsBottomSheet : DialogFragment() {
             )
         }
 
+        // ── Immersion mode toggle ────────────────────────────────────────
+        val switchImmersionMode = view.findViewById<Switch>(R.id.switchImmersionMode)
+        switchImmersionMode.isChecked = prefs.immersionMode
+        switchImmersionMode.setOnCheckedChangeListener { _, checked ->
+            prefs.immersionMode = checked
+            if (checked) {
+                prefs.hideTranslationSection = true
+            }
+        }
+        view.findViewById<View>(R.id.rowImmersionMode).setOnClickListener {
+            switchImmersionMode.toggle()
+        }
+
         // ── Overlay icon toggle ──────────────────────────────────────────
         val switchOverlayIcon = view.findViewById<Switch>(R.id.switchOverlayIcon)
         val tvOverlayIconTitle = view.findViewById<TextView>(R.id.tvOverlayIconTitle)
@@ -281,6 +294,53 @@ class SettingsBottomSheet : DialogFragment() {
                 prefs.captureIntervalSec = v
             }
         })
+
+        // ── Capture hotkey ───────────────────────────────────────────────
+        val switchHotkeyEnabled = view.findViewById<Switch>(R.id.switchHotkeyEnabled)
+        val llHotkeyOptions = view.findViewById<LinearLayout>(R.id.llHotkeyOptions)
+        val tvHotkeyButton = view.findViewById<TextView>(R.id.tvHotkeyButton)
+        val switchVolumeTrigger = view.findViewById<Switch>(R.id.switchVolumeTrigger)
+
+        fun formatKeyCode(code: Int): String {
+            val name = android.view.KeyEvent.keyCodeToString(code)
+            return name.removePrefix("KEYCODE_BUTTON_").removePrefix("KEYCODE_")
+        }
+
+        tvHotkeyButton.text = formatKeyCode(prefs.hotkeyKeyCode)
+        switchHotkeyEnabled.isChecked = prefs.hotkeyEnabled
+        llHotkeyOptions.visibility = if (prefs.hotkeyEnabled) View.VISIBLE else View.GONE
+
+        switchHotkeyEnabled.setOnCheckedChangeListener { _, checked ->
+            prefs.hotkeyEnabled = checked
+            llHotkeyOptions.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+        view.findViewById<View>(R.id.rowHotkeyEnabled).setOnClickListener {
+            switchHotkeyEnabled.toggle()
+        }
+
+        view.findViewById<View>(R.id.rowHotkeyButton).setOnClickListener {
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setMessage(R.string.pref_hotkey_press_prompt)
+                .setNegativeButton(android.R.string.cancel, null)
+                .create()
+            dialog.setOnKeyListener { _, keyCode, event ->
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && keyCode != android.view.KeyEvent.KEYCODE_BACK) {
+                    prefs.hotkeyKeyCode = keyCode
+                    tvHotkeyButton.text = formatKeyCode(keyCode)
+                    dialog.dismiss()
+                    true
+                } else false
+            }
+            dialog.show()
+        }
+
+        switchVolumeTrigger.isChecked = prefs.volumeKeyTriggerEnabled
+        switchVolumeTrigger.setOnCheckedChangeListener { _, checked ->
+            prefs.volumeKeyTriggerEnabled = checked
+        }
+        view.findViewById<View>(R.id.rowVolumeTrigger).setOnClickListener {
+            switchVolumeTrigger.toggle()
+        }
 
         // ── Show transliteration (auto-save on toggle) ──────────────────
         val switchShowTransliteration = view.findViewById<Switch>(R.id.switchShowTransliteration)

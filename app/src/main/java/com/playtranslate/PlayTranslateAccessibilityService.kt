@@ -570,6 +570,22 @@ class PlayTranslateAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        // ── Hotkey capture trigger ──
+        val prefs = Prefs(this)
+        if (prefs.hotkeyEnabled && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val keyCode = event.keyCode
+            val isHotkeyMatch = keyCode == prefs.hotkeyKeyCode
+            val isVolumeMatch = prefs.volumeKeyTriggerEnabled &&
+                (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+
+            if (isHotkeyMatch || isVolumeMatch) {
+                CaptureService.instance?.captureOnce()
+                floatingIcon?.flash()
+                return true // consume the event
+            }
+        }
+
+        // ── Existing gamepad interaction detection (for live mode) ──
         val src = event.source
         val isGameInput = src and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
             || src and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD

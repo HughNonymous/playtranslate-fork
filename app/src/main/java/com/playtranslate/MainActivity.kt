@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Display
+import android.view.KeyEvent
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -253,6 +254,17 @@ class MainActivity : AppCompatActivity(), TranslationResultFragment.TranslationR
             ACTION_ADD_CUSTOM_REGION -> openAddCustomRegionFromDropdown()
             ACTION_REFRESH_REGION_LABEL -> updateRegionButton()
         }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val prefs = Prefs(this)
+        if (prefs.hotkeyEnabled && prefs.volumeKeyTriggerEnabled) {
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                CaptureService.instance?.captureOnce()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onResume() {

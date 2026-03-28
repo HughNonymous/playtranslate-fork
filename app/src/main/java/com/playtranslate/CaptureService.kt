@@ -258,8 +258,17 @@ class CaptureService : Service() {
                 return
             }
 
-            onStatusUpdate?.invoke(getString(R.string.status_translating))
-            val (translated, note) = translateGroups(ocrResult.groupTexts)
+            val translated: String
+            val note: String?
+            if (Prefs(this).immersionMode) {
+                translated = ""
+                note = null
+            } else {
+                onStatusUpdate?.invoke(getString(R.string.status_translating))
+                val result = translateGroups(ocrResult.groupTexts)
+                translated = result.first
+                note = result.second
+            }
 
             val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
             onResult?.invoke(
@@ -652,6 +661,21 @@ class CaptureService : Service() {
             val liveGroupBounds = ocrResult.groupBounds
             val liveGroupLineCounts = ocrResult.groupLineCounts
 
+            if (Prefs(this).immersionMode) {
+                // Immersion mode: skip translation, just emit OCR result
+                PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
+                val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                onResult?.invoke(
+                    TranslationResult(
+                        originalText   = newText,
+                        segments       = ocrResult.segments,
+                        translatedText = "",
+                        timestamp      = timestamp,
+                        screenshotPath = screenshotPath,
+                        note           = null
+                    )
+                )
+            } else {
             // Show shimmer placeholders
             val buffer = 10 / colorScale
             val cRef = colorRef!!
@@ -710,6 +734,7 @@ class CaptureService : Service() {
                 setupDetection(raw, fullDisplayBoxes, overlayBoxes)
                 DetectionLog.log("processClean: done, ${overlayBoxes.size} overlays shown")
             }
+            } // end else (non-immersion)
         } catch (e: kotlinx.coroutines.CancellationException) {
             DetectionLog.log("processClean: cancelled")
             throw e
@@ -1191,6 +1216,21 @@ class CaptureService : Service() {
             val liveGroupBounds = ocrResult.groupBounds
             val liveGroupLineCounts = ocrResult.groupLineCounts
 
+            if (Prefs(this).immersionMode) {
+                // Immersion mode: skip translation, just emit OCR result
+                PlayTranslateAccessibilityService.instance?.hideTranslationOverlay()
+                val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                onResult?.invoke(
+                    TranslationResult(
+                        originalText   = newText,
+                        segments       = ocrResult.segments,
+                        translatedText = "",
+                        timestamp      = timestamp,
+                        screenshotPath = screenshotPath,
+                        note           = null
+                    )
+                )
+            } else {
             // Sample colors and show skeleton placeholders immediately
             // so the user sees overlay positions while translations load.
             val buffer = 10 / colorScale
@@ -1244,6 +1284,7 @@ class CaptureService : Service() {
                 cachedOverlayScreenH = screenshotH
                 showLiveOverlay(overlayBoxes, left, top, screenshotW, screenshotH)
             }
+            } // end else (non-immersion)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -1426,8 +1467,17 @@ class CaptureService : Service() {
                 return
             }
 
-            onStatusUpdate?.invoke(getString(R.string.status_translating))
-            val (translated, note) = translateGroups(ocrResult.groupTexts)
+            val translated: String
+            val note: String?
+            if (Prefs(this).immersionMode) {
+                translated = ""
+                note = null
+            } else {
+                onStatusUpdate?.invoke(getString(R.string.status_translating))
+                val result = translateGroups(ocrResult.groupTexts)
+                translated = result.first
+                note = result.second
+            }
 
             val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
             onResult?.invoke(

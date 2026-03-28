@@ -429,7 +429,7 @@ class DragLookupController(
         return nearest?.let { it.token to it.idx }
     }
 
-    private fun showPopup(entry: JishoWord, fingerX: Int, fingerY: Int) {
+    private suspend fun showPopup(entry: JishoWord, fingerX: Int, fingerY: Int) {
         currentEntry = entry
         val form = entry.japanese.firstOrNull()
         val word = form?.word ?: form?.reading ?: entry.slug
@@ -438,8 +438,18 @@ class DragLookupController(
         val senses = entry.senses.map { sense ->
             WordLookupPopup.SenseDisplay(
                 pos = sense.partsOfSpeech.joinToString(", "),
-                definition = sense.englishDefinitions.joinToString("; ")
+                definition = sense.englishDefinitions.joinToString("; "),
+                misc = sense.misc
             )
+        }
+
+        // Compute JLPT level from kanji characters
+        val jlptLevel = withContext(Dispatchers.IO) {
+            val w = form?.word ?: return@withContext 0
+            w.filter { it.code > 0x4E00 }
+                .mapNotNull { DictionaryManager.get(popup.ctx).lookupKanji(it)?.jlpt }
+                .filter { it > 0 }
+                .maxOrNull() ?: 0
         }
 
         popup.show(
@@ -448,6 +458,7 @@ class DragLookupController(
             senses = senses,
             freqScore = entry.freqScore,
             isCommon = entry.isCommon == true,
+            jlptLevel = jlptLevel,
             screenX = fingerX,
             screenY = fingerY,
             screenW = screenW,

@@ -80,6 +80,7 @@ class TranslationResultFragment : Fragment() {
     private lateinit var labelTranslation: TextView
     private lateinit var tvNoWords: TextView
     private lateinit var tvTransliteration: TextView
+    private lateinit var btnTranslateOnce: TextView
 
     private var wordLookupJob: Job? = null
     val mainWordResults = mutableMapOf<String, Triple<String, String, Int>>()
@@ -145,6 +146,7 @@ class TranslationResultFragment : Fragment() {
         labelTranslation     = view.findViewById(R.id.labelTranslation)
         tvNoWords            = view.findViewById(R.id.tvNoWords)
         tvTransliteration    = view.findViewById(R.id.tvTransliteration)
+        btnTranslateOnce     = view.findViewById(R.id.btnTranslateOnce)
     }
 
     private fun setupButtons() {
@@ -172,6 +174,24 @@ class TranslationResultFragment : Fragment() {
         btnToggleWords.setOnClickListener {
             prefs.hideWordsSection = !prefs.hideWordsSection
             applyWordsVisibility()
+        }
+        btnTranslateOnce.setOnClickListener {
+            val service = host?.getCaptureService() ?: return@setOnClickListener
+            val text = lastResult?.originalText ?: return@setOnClickListener
+            viewLifecycleOwner.lifecycleScope.launch {
+                btnTranslateOnce.visibility = View.GONE
+                tvTranslation.text = getString(R.string.status_translating)
+                translationContent.visibility = View.VISIBLE
+                labelTranslation.visibility = View.VISIBLE
+                btnCopyTranslation.visibility = View.VISIBLE
+                val (translated, note) = withContext(Dispatchers.IO) {
+                    service.translateOnce(text)
+                }
+                tvTranslation.text = translated
+                tvTranslationNote.text = note ?: ""
+                tvTranslationNote.visibility = if (note != null) View.VISIBLE else View.GONE
+                lastResult = lastResult?.copy(translatedText = translated, note = note)
+            }
         }
     }
 
@@ -223,6 +243,22 @@ class TranslationResultFragment : Fragment() {
         applyWordsVisibility()
         labelOriginal.text    = langDisplayName(selectedSourceLang())
         labelTranslation.text = langDisplayName(selectedTargetLang())
+
+        // Immersion mode: hide translation, force-show original + words, show translate button
+        if (prefs.immersionMode) {
+            translationContent.visibility = View.GONE
+            btnCopyTranslation.visibility = View.INVISIBLE
+            btnToggleTranslation.visibility = View.GONE
+            labelTranslation.visibility = View.GONE
+            originalContent.visibility = View.VISIBLE
+            btnCopyOriginal.visibility = View.VISIBLE
+            btnEditOriginal.visibility = View.VISIBLE
+            wordsContent.visibility = View.VISIBLE
+            btnTranslateOnce.visibility = View.VISIBLE
+        } else {
+            btnTranslateOnce.visibility = View.GONE
+        }
+
         statusContainer.visibility = View.GONE
         resultsContent.visibility  = View.VISIBLE
         resultsContent.scrollTo(0, 0)

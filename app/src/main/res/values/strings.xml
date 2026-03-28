@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PlayTranslate</string>
+    <string name="app_name">PlayRead</string>
 
     <!-- Actions -->
     <string name="btn_translate">Translate</string>
@@ -142,4 +142,18 @@
     <string name="anki_mode_word">Word</string>
     <string name="anki_bold_target_word">Bold target word in sentence</string>
     <string name="anki_bold_target_word_named">Bold \"%1$s\" in sentence</string>
+
+    <!-- Capture hotkey -->
+    <string name="pref_hotkey_section">CAPTURE HOTKEY</string>
+    <string name="pref_hotkey_enabled">Gamepad Hotkey</string>
+    <string name="pref_hotkey_enabled_desc">Press a gamepad button to trigger OCR capture</string>
+    <string name="pref_hotkey_button">Trigger Button</string>
+    <string name="pref_hotkey_press_prompt">Press any gamepad button…</string>
+    <string name="pref_volume_trigger">Volume Key Trigger</string>
+    <string name="pref_volume_trigger_desc">Use volume up/down as capture trigger</string>
+
+    <!-- Immersion mode -->
+    <string name="pref_immersion_mode">Immersion Mode</string>
+    <string name="pref_immersion_mode_desc">Show Japanese text with tap-to-lookup dictionary. Translation available on demand.</string>
+    <string name="live_hint_immersion">Live — auto-updating Japanese text</string>
 </resources>

@@ -14,7 +14,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.playtranslate"
+        applicationId = "com.hughnonymous.playread"
         minSdk = 26
         targetSdk = 34
         versionCode = 2

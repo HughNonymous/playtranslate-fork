@@ -499,6 +499,13 @@ class FloatingOverlayIcon(context: Context) : View(context) {
         p.y = cy - viewHalf
     }
 
+    /** Brief alpha flash to indicate a hotkey capture was triggered. */
+    fun flash() {
+        animate().alpha(0.3f).setDuration(100).withEndAction {
+            animate().alpha(1.0f).setDuration(100).start()
+        }.start()
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         hideSpinnerWindow()

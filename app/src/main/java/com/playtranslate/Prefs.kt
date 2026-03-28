@@ -63,7 +63,7 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putBoolean(KEY_SHOW_TRANSLITERATION, v).apply()
 
     var hideTranslationSection: Boolean
-        get() = sp.getBoolean(KEY_HIDE_TRANSLATION_SECTION, false)
+        get() = sp.getBoolean(KEY_HIDE_TRANSLATION_SECTION, true)
         set(v) = sp.edit().putBoolean(KEY_HIDE_TRANSLATION_SECTION, v).apply()
 
     var hideOriginalSection: Boolean
@@ -125,6 +125,26 @@ class Prefs(context: Context) {
     var debugShowDetectionLog: Boolean
         get() = sp.getBoolean(KEY_DEBUG_SHOW_DETECTION_LOG, false)
         set(v) = sp.edit().putBoolean(KEY_DEBUG_SHOW_DETECTION_LOG, v).apply()
+
+    /** Immersion mode: show raw Japanese text + tap-to-lookup, skip translation by default. */
+    var immersionMode: Boolean
+        get() = sp.getBoolean(KEY_IMMERSION_MODE, true)
+        set(v) = sp.edit().putBoolean(KEY_IMMERSION_MODE, v).apply()
+
+    /** Whether the gamepad hotkey capture trigger is enabled. */
+    var hotkeyEnabled: Boolean
+        get() = sp.getBoolean(KEY_HOTKEY_ENABLED, false)
+        set(v) = sp.edit().putBoolean(KEY_HOTKEY_ENABLED, v).apply()
+
+    /** KeyEvent keyCode for the hotkey trigger button. Default: R1. */
+    var hotkeyKeyCode: Int
+        get() = sp.getInt(KEY_HOTKEY_KEYCODE, android.view.KeyEvent.KEYCODE_BUTTON_R1)
+        set(v) = sp.edit().putInt(KEY_HOTKEY_KEYCODE, v).apply()
+
+    /** Whether volume up/down keys also trigger capture. */
+    var volumeKeyTriggerEnabled: Boolean
+        get() = sp.getBoolean(KEY_VOLUME_TRIGGER, false)
+        set(v) = sp.edit().putBoolean(KEY_VOLUME_TRIGGER, v).apply()
 
     /** Set before recreate() so MainActivity suppresses the window transition animation. */
     var suppressNextTransition: Boolean
@@ -194,6 +214,10 @@ class Prefs(context: Context) {
         private const val KEY_DEBUG_FORCE_SINGLE_SCREEN      = "debug_force_single_screen"
         private const val KEY_DEBUG_SHOW_OCR_BOXES           = "debug_show_ocr_boxes"
         private const val KEY_DEBUG_SHOW_DETECTION_LOG      = "debug_show_detection_log"
+        private const val KEY_IMMERSION_MODE                = "immersion_mode"
+        private const val KEY_HOTKEY_ENABLED                = "hotkey_enabled"
+        private const val KEY_HOTKEY_KEYCODE                = "hotkey_keycode"
+        private const val KEY_VOLUME_TRIGGER                = "volume_key_trigger"
 
         /** Single source of truth for single-screen detection. */
         fun isSingleScreen(context: Context): Boolean {
